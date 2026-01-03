@@ -84,7 +84,6 @@
                             <div>
                                 <h3 class="font-bold text-lg flex items-center gap-2">
                                     <i class="fa-solid fa-user-circle text-gray-400"></i>
-                                    <!-- নাম এবং আইডি এখানে দেখাবে -->
                                     <span id="active-user-name">Loading...</span>
                                 </h3>
                                 <p class="text-xs text-gray-500" id="active-page-id">Page: ...</p>
@@ -195,7 +194,7 @@
                     authToken = pass;
                     document.getElementById('loginModal').classList.add('hidden');
                     document.getElementById('dashboard').classList.remove('hidden');
-                    startPolling(); // Start auto-refresh
+                    startPolling(); 
                     loadDashboardData();
                 } else if(!isAuto) document.getElementById('loginError').classList.remove('hidden');
             } catch (e) { console.error(e); }
@@ -207,16 +206,12 @@
             location.reload(); 
         }
 
-        // --- Auto Refresh Logic ---
         function startPolling() {
             if(pollingInterval) clearInterval(pollingInterval);
-            // প্রতি ৩ সেকেন্ড পর পর ডাটা চেক করবে
             pollingInterval = setInterval(() => {
                 if(!document.getElementById('dashboard').classList.contains('hidden')) {
-                    // ইনবক্স লিস্ট আপডেট
                     if(!document.getElementById('inbox-section').classList.contains('hidden')) {
                         loadConversations(true); 
-                        // যদি চ্যাট ওপেন থাকে, তবে মেসেজ আপডেট
                         if(currentActiveUser) refreshChat(true);
                     }
                 }
@@ -240,15 +235,13 @@
 
         async function loadDashboardData() { showSection('inbox'); }
 
-        // --- INBOX LOGIC ---
-        let lastConvsHash = ""; // To prevent UI flickering
+        let lastConvsHash = "";
 
         async function loadConversations(isBackground = false) {
             try {
                 const res = await fetch('/api/inbox/conversations', { headers: { 'x-admin-pass': authToken } });
                 const users = await res.json();
                 
-                // Simple hash check to avoid redraw if data hasn't changed
                 const currentHash = JSON.stringify(users.map(u => u.lastInteraction));
                 if(isBackground && currentHash === lastConvsHash) return;
                 lastConvsHash = currentHash;
@@ -260,10 +253,8 @@
                     return;
                 }
 
-                // UI Rebuild
                 let html = '';
                 users.forEach(u => {
-                    // নাম এবং আইডি ফরম্যাটিং (লিস্টের জন্য)
                     const displayName = u.userName 
                         ? `<span class="font-bold">${u.userName}</span> <span class="text-xs text-gray-500">(${u.userId})</span>` 
                         : `<span class="font-bold">User: ${u.userId}</span>`;
@@ -299,7 +290,6 @@
             document.getElementById('messages-container').classList.remove('hidden');
             document.getElementById('chat-input-area').classList.remove('hidden');
             
-            // নাম এবং আইডি সেট করা (হেডারের জন্য)
             const nameDisplay = (userName && userName !== 'undefined' && userName !== '') 
                 ? `${userName} <span class="text-xs text-gray-400 font-normal ml-2">(${userId})</span>` 
                 : `User: ${userId}`;
@@ -308,16 +298,14 @@
             document.getElementById('active-page-id').innerText = `Page ID: ${pageId}`;
 
             try {
-                // AI Status Check
                 const statusRes = await fetch(`/api/inbox/ai-status?pageId=${pageId}&userId=${userId}`, { headers: { 'x-admin-pass': authToken } });
                 const statusData = await statusRes.json();
                 const toggle = document.getElementById('ai-toggle');
                 
-                toggle.checked = !statusData.paused; // If paused=false, Toggle=Checked (ON)
+                toggle.checked = !statusData.paused; 
                 updateToggleUI(toggle.checked);
 
                 await refreshChat();
-                // Scroll to bottom on open
                 const container = document.getElementById('messages-container');
                 container.scrollTop = container.scrollHeight;
             } catch (e) { console.error(e); }
@@ -373,31 +361,34 @@
         }
 
         async function toggleAI() {
+            // FIX: Ensure chat is active before toggling
+            if(!currentActiveUser || !currentActivePage) {
+                console.error("No active chat to toggle AI");
+                return;
+            }
+
             const isChecked = document.getElementById('ai-toggle').checked;
             updateToggleUI(isChecked);
             
             try {
-                // Save state
                 const res = await fetch('/api/inbox/toggle-ai', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
                     body: JSON.stringify({ 
                         pageId: currentActivePage, 
                         userId: currentActiveUser, 
-                        paused: !isChecked // Checked means ON (Not Paused)
+                        paused: !isChecked 
                     })
                 });
 
                 if(!res.ok) {
                     console.error("Failed to save AI state");
-                    // Revert UI if failed
                     document.getElementById('ai-toggle').checked = !isChecked;
                     updateToggleUI(!isChecked);
                     alert("Failed to change AI status!");
                 }
             } catch (e) {
                 console.error(e);
-                // Revert UI if failed
                 document.getElementById('ai-toggle').checked = !isChecked;
                 updateToggleUI(!isChecked);
             }
@@ -410,7 +401,7 @@
             const text = input.value.trim();
             if(!text || !currentActiveUser) return;
 
-            input.value = ''; // Clear immediately
+            input.value = ''; 
             
             try {
                 const res = await fetch('/api/inbox/reply', {
@@ -424,10 +415,10 @@
                 });
 
                 if(res.ok) {
-                    refreshChat(); // Immediate refresh
+                    refreshChat(); 
                 } else {
                     const err = await res.json();
-                    alert("Failed to send: " + (err.error || "Unknown Error"));
+                    alert("⚠️ Message failed: " + (err.error || "Unknown Error") + "\n\nTip: Go to 'Pages & Persona' tab and verify this page is added correctly.");
                 }
             } catch (e) {
                 console.error(e);
@@ -435,7 +426,6 @@
             }
         }
 
-        // --- Other Sections (Same as before) ---
         async function fetchStats() {
             const res = await fetch('/api/stats', { headers: { 'x-admin-pass': authToken } });
             const data = await res.json();
