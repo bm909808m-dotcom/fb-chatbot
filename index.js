@@ -1,6 +1,6 @@
 /**
- * Facebook Unified Inbox + Admin Dashboard + Custom Persona (Fixed)
- * Features: Live Chat, Human Takeover, AI Pause/Resume, Custom System Prompts
+ * Facebook Unified Inbox + Admin Dashboard + Custom Persona + Auto Refresh
+ * Features: Live Chat, Human Takeover, AI Pause/Resume, Name Fetching
  */
 
 const express = require('express');
@@ -8,18 +8,21 @@ const axios = require('axios');
 const { MongoClient } = require('mongodb');
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const path = require('path');
+const fs = require('fs');
 require('dotenv').config();
 
 const app = express();
 app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+
+// পাবলিক ফোল্ডার পাথ
+const publicPath = path.join(__dirname, 'public');
+app.use(express.static(publicPath));
 
 // --- CONFIGURATION ---
 const PORT = process.env.PORT || 3000;
 const MONGO_URI = process.env.MONGO_URI; 
 const DB_NAME = "fb_automation_db";
 
-// Collections
 const COL_TOKENS = "page_tokens";
 const COL_MESSAGES = "messages";          
 const COL_CONV_STATE = "conversation_states"; 
@@ -41,22 +44,50 @@ async function getDb() {
     return dbClient.db(DB_NAME);
 }
 
-// Save a single message bubble
-async function saveMessage(pageId, userId, sender, text) {
+// ইউজারের নাম ফেসবুক থেকে নিয়ে আসার ফাংশন (NEW)
+async function getUserProfile(userId, pageAccessToken) {
+    try {
+        const url = `https://graph.facebook.com/${userId}?fields=first_name,last_name,profile_pic&access_token=${pageAccessToken}`;
+        const res = await axios.get(url);
+        const userData = res.data;
+        return `${userData.first_name} ${userData.last_name}`;
+    } catch (error) {
+        // যদি নাম না পাওয়া যায়, তবে কিছু রিটার্ন করবে না
+        return null;
+    }
+}
+
+// মেসেজ সেভ করার সময় নামও সেভ করা হবে (Updated)
+async function saveMessage(pageId, userId, sender, text, pageToken = null) {
     try {
         const db = await getDb();
         await db.collection(COL_MESSAGES).insertOne({
             pageId,
             userId,
-            sender, // 'user', 'ai', 'admin'
+            sender, 
             text,
             timestamp: new Date()
         });
         
+        // কনভারসেশন স্টেট আপডেট (নাম সহ)
+        const updateData = { lastInteraction: new Date() };
+        
+        // যদি ইউজার হয় এবং আমাদের কাছে টোকেন থাকে, তবে নাম আনার চেষ্টা করব
+        if (sender === 'user' && pageToken) {
+            // আগে চেক করি নাম অলরেডি আছে কিনা
+            const existingState = await db.collection(COL_CONV_STATE).findOne({ pageId, userId });
+            if (!existingState || !existingState.userName) {
+                const name = await getUserProfile(userId, pageToken);
+                if (name) {
+                    updateData.userName = name;
+                }
+            }
+        }
+
         await db.collection(COL_CONV_STATE).updateOne(
             { pageId, userId },
             { 
-                $set: { lastInteraction: new Date() },
+                $set: updateData,
                 $setOnInsert: { aiPaused: false } 
             },
             { upsert: true }
@@ -76,7 +107,6 @@ async function isAiPaused(pageId, userId) {
     }
 }
 
-// Get Page Data (Token + Persona)
 async function getPageData(pageId) {
     const db = await getDb();
     return await db.collection(COL_TOKENS).findOne({ Page_ID: pageId });
@@ -92,7 +122,6 @@ const auth = (req, res, next) => {
     }
 };
 
-// 1. Get Conversation List
 app.get('/api/inbox/conversations', auth, async (req, res) => {
     try {
         const db = await getDb();
@@ -102,12 +131,9 @@ app.get('/api/inbox/conversations', auth, async (req, res) => {
             .limit(20)
             .toArray();
         res.json(convs);
-    } catch (e) { 
-        res.status(500).json({ error: e.message }); 
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// 2. Get Chat History
 app.get('/api/inbox/messages', auth, async (req, res) => {
     try {
         const { pageId, userId } = req.query;
@@ -118,23 +144,17 @@ app.get('/api/inbox/messages', auth, async (req, res) => {
             .limit(100)
             .toArray();
         res.json(msgs);
-    } catch (e) { 
-        res.status(500).json({ error: e.message }); 
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// 3. Get AI Status
 app.get('/api/inbox/ai-status', auth, async (req, res) => {
     try {
         const { pageId, userId } = req.query;
         const paused = await isAiPaused(pageId, userId);
         res.json({ paused });
-    } catch (e) { 
-        res.status(500).json({ error: e.message }); 
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// 4. Toggle AI
 app.post('/api/inbox/toggle-ai', auth, async (req, res) => {
     try {
         const { pageId, userId, paused } = req.body;
@@ -145,12 +165,9 @@ app.post('/api/inbox/toggle-ai', auth, async (req, res) => {
             { upsert: true }
         );
         res.json({ success: true });
-    } catch (e) { 
-        res.status(500).json({ error: e.message }); 
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// 5. Send Manual Reply
 app.post('/api/inbox/reply', auth, async (req, res) => {
     try {
         const { pageId, userId, text } = req.body;
@@ -173,7 +190,7 @@ app.post('/api/inbox/reply', auth, async (req, res) => {
     }
 });
 
-// --- PAGE MANAGEMENT API ---
+// Stats & Pages API
 app.get('/api/stats', auth, async (req, res) => {
     const db = await getDb();
     const totalLogs = await db.collection(COL_MESSAGES).countDocuments();
@@ -187,16 +204,14 @@ app.get('/api/pages', auth, async (req, res) => {
     res.json(pages);
 });
 
-// Add or Update Page (With Persona)
 app.post('/api/pages', auth, async (req, res) => {
     try {
         const { name, id, token, persona } = req.body;
         const db = await getDb();
         
-        // Prepare update object
         let updateFields = { Page_Name: name };
-        if (token) updateFields.Access_Token = token; // Only update token if provided
-        if (persona !== undefined) updateFields.System_Prompt = persona; // Update persona
+        if (token) updateFields.Access_Token = token; 
+        if (persona !== undefined) updateFields.System_Prompt = persona;
 
         await db.collection(COL_TOKENS).updateOne(
             { Page_ID: id },
@@ -204,14 +219,16 @@ app.post('/api/pages', auth, async (req, res) => {
             { upsert: true }
         );
         res.json({ success: true });
-    } catch (e) { 
-        res.status(500).json({ error: e.message }); 
-    }
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// --- WEBHOOK LOGIC (The Brain) ---
+// --- WEBHOOK LOGIC ---
 
-app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'dashboard.html')));
+app.get('/', (req, res) => {
+    const dashboardPath = path.join(publicPath, 'dashboard.html');
+    if (fs.existsSync(dashboardPath)) res.sendFile(dashboardPath);
+    else res.status(404).send("Dashboard not found. Check 'public' folder.");
+});
 
 app.get('/webhook', (req, res) => {
     if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === FB_VERIFY_TOKEN) {
@@ -236,8 +253,11 @@ app.post('/webhook', async (req, res) => {
 
                         if (senderId === pageId) continue;
 
-                        // 1. Save User Message
-                        await saveMessage(pageId, senderId, 'user', userMsg);
+                        // 0. Get Page Token for Name Fetching
+                        const pageData = await getPageData(pageId);
+                        
+                        // 1. Save User Message (and Fetch Name)
+                        await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
 
                         // 2. Check Pause Status
                         const paused = await isAiPaused(pageId, senderId);
@@ -247,11 +267,8 @@ app.post('/webhook', async (req, res) => {
                         }
 
                         try {
-                            // 3. Get Page Data & Persona
-                            const pageData = await getPageData(pageId);
                             if (!pageData || !pageData.Access_Token) continue;
 
-                            // PERSONA LOGIC: Use DB System_Prompt or Default
                             const defaultPersona = "You are a helpful customer support assistant. Keep replies short and polite.";
                             const systemInstruction = pageData.System_Prompt || defaultPersona;
 
@@ -281,4 +298,6 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Inbox Server running on port ${PORT}`));
+app.listen(PORT, () => {
+    console.log(`Inbox Server running on port ${PORT}`);
+});
