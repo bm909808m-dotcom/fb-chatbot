@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chatbot Admin Panel</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .chat-bubble { max-width: 75%; }
+        .scrollbar-hide::-webkit-scrollbar { display: none; }
+    </style>
+</head>
+<body class="bg-gray-100 text-gray-800 h-screen overflow-hidden">
+
+    <!-- Login Modal -->
+    <div id="loginModal" class="fixed inset-0 bg-gray-900 bg-opacity-90 flex items-center justify-center z-50">
+        <div class="bg-white p-8 rounded-lg shadow-xl w-96">
+            <h2 class="text-2xl font-bold mb-4 text-center">Admin Login</h2>
+            <input type="password" id="adminPass" placeholder="Enter Admin Password" class="w-full p-3 border rounded mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
+            <button onclick="checkLogin()" class="w-full bg-blue-600 text-white p-3 rounded hover:bg-blue-700 font-bold">Login</button>
+            <p id="loginError" class="text-red-500 text-sm mt-2 hidden">ভুল পাসওয়ার্ড!</p>
+        </div>
+    </div>
+
+    <!-- Main Dashboard -->
+    <div id="dashboard" class="hidden h-full flex flex-col">
+        <!-- Navbar -->
+        <nav class="bg-white shadow-md p-4 flex justify-between items-center z-10">
+            <h1 class="text-xl font-bold text-blue-600 flex items-center gap-2">
+                <i class="fa-solid fa-robot"></i> AI Bot Dashboard
+            </h1>
+            <div class="flex items-center gap-4">
+                <button onclick="logout()" class="text-sm text-red-500 font-semibold hover:underline">Logout</button>
+            </div>
+        </nav>
+
+        <div class="flex flex-1 overflow-hidden">
+            <!-- Sidebar -->
+            <aside class="w-64 bg-gray-800 text-white flex flex-col hidden md:flex flex-shrink-0">
+                <div class="p-4 text-gray-400 text-xs font-bold uppercase tracking-wider">Menu</div>
+                <nav class="flex-1 space-y-1">
+                    <button onclick="showSection('inbox')" class="w-full text-left p-4 hover:bg-gray-700 border-l-4 border-blue-500 bg-gray-700 flex items-center gap-3 transition-colors" id="btn-inbox">
+                        <i class="fa-solid fa-inbox"></i> Live Inbox
+                    </button>
+                    <button onclick="showSection('pages')" class="w-full text-left p-4 hover:bg-gray-700 border-l-4 border-transparent flex items-center gap-3 transition-colors" id="btn-pages">
+                        <i class="fa-brands fa-facebook"></i> Pages & Persona
+                    </button>
+                    <button onclick="showSection('stats')" class="w-full text-left p-4 hover:bg-gray-700 border-l-4 border-transparent flex items-center gap-3 transition-colors" id="btn-stats">
+                        <i class="fa-solid fa-chart-line"></i> Statistics
+                    </button>
+                </nav>
+            </aside>
+
+            <!-- Content Area -->
+            <main class="flex-1 bg-gray-100 relative overflow-hidden flex flex-col">
+                
+                <!-- INBOX SECTION -->
+                <div id="inbox-section" class="flex h-full w-full">
+                    <!-- Inbox: Conversation List (Left) -->
+                    <div class="w-1/3 bg-white border-r flex flex-col min-w-[250px]">
+                        <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
+                            <h2 class="font-bold text-lg">Conversations</h2>
+                            <button onclick="loadConversations()" class="text-blue-600 hover:text-blue-800"><i class="fa-solid fa-rotate"></i></button>
+                        </div>
+                        <div id="conversation-list" class="flex-1 overflow-y-auto">
+                            <div class="p-4 text-center text-gray-400">Loading...</div>
+                        </div>
+                    </div>
+
+                    <!-- Inbox: Chat Window (Right) -->
+                    <div class="flex-1 flex flex-col bg-gray-100 relative" id="chat-window">
+                        <!-- Chat Header -->
+                        <div id="chat-header" class="p-4 bg-white border-b flex justify-between items-center hidden">
+                            <div>
+                                <h3 class="font-bold text-lg flex items-center gap-2">
+                                    <i class="fa-solid fa-user-circle text-gray-400"></i>
+                                    <span id="active-user-id">Select a user</span>
+                                </h3>
+                                <p class="text-xs text-gray-500" id="active-page-id">Page: ...</p>
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <label class="flex items-center cursor-pointer gap-2 bg-gray-100 px-3 py-1 rounded-full border">
+                                    <span class="text-sm font-medium text-gray-700">AI Reply:</span>
+                                    <div class="relative inline-block w-10 h-6 align-middle select-none transition duration-200 ease-in">
+                                        <input type="checkbox" id="ai-toggle" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer" onchange="toggleAI()">
+                                        <label for="ai-toggle" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                                    </div>
+                                    <span id="ai-status-text" class="text-xs font-bold text-green-600">ON</span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <!-- Chat Messages Area -->
+                        <div id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-4 hidden">
+                            <div class="flex justify-center items-center h-full text-gray-400">
+                                Select a conversation to start messaging
+                            </div>
+                        </div>
+
+                        <!-- Chat Input Area -->
+                        <div id="chat-input-area" class="p-4 bg-white border-t hidden">
+                            <div class="flex gap-2">
+                                <input type="text" id="reply-input" placeholder="Type a manual reply..." class="flex-1 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" onkeypress="handleEnter(event)">
+                                <button onclick="sendReply()" class="bg-blue-600 text-white px-6 py-3 rounded-lg hover:bg-blue-700 font-bold flex items-center gap-2">
+                                    <i class="fa-solid fa-paper-plane"></i> Send
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- STATS SECTION -->
+                <div id="stats-section" class="p-6 hidden h-full overflow-y-auto">
+                    <h2 class="text-2xl font-bold mb-6">Overview</h2>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div class="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
+                            <h3 class="text-gray-500">Total Interactions</h3>
+                            <p class="text-3xl font-bold" id="total-logs">0</p>
+                        </div>
+                        <div class="bg-white p-6 rounded-lg shadow border-l-4 border-green-500">
+                            <h3 class="text-gray-500">Active Pages</h3>
+                            <p class="text-3xl font-bold" id="total-pages">0</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- PAGES SECTION -->
+                <div id="pages-section" class="p-6 hidden h-full overflow-y-auto">
+                    <div class="flex justify-between items-center mb-6">
+                        <h2 class="text-2xl font-bold">Connected Pages & Persona</h2>
+                        <button onclick="openAddPageModal()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2">
+                            <i class="fa-solid fa-plus"></i> Add/Update Page
+                        </button>
+                    </div>
+                    <div class="bg-white rounded-lg shadow overflow-hidden">
+                        <table class="w-full text-left">
+                            <thead>
+                                <tr class="bg-gray-50 text-gray-600 text-sm uppercase">
+                                    <th class="p-4 border-b">Page Name</th>
+                                    <th class="p-4 border-b">Page ID</th>
+                                    <th class="p-4 border-b w-1/3">AI Persona (Short View)</th>
+                                    <th class="p-4 border-b text-right">Action</th>
+                                </tr>
+                            </thead>
+                            <tbody id="pages-table-body"></tbody>
+                        </table>
+                    </div>
+                    <p class="mt-4 text-sm text-gray-500">* To edit a persona, click "Add/Update Page" and enter the same Page ID with new details.</p>
+                </div>
+
+            </main>
+        </div>
+    </div>
+
+    <!-- Add/Edit Page Modal -->
+    <div id="addPageModal" class="fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-50 hidden">
+        <div class="bg-white p-6 rounded-lg shadow-xl w-[500px]">
+            <h2 class="text-xl font-bold mb-4">Manage Facebook Page</h2>
+            <div class="space-y-3">
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Page Name</label>
+                    <input type="text" id="newPageName" placeholder="e.g. My Fashion Shop" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Page ID (Required)</label>
+                    <input type="text" id="newPageId" placeholder="e.g. 1234567890" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">Access Token</label>
+                    <input type="password" id="newPageToken" placeholder="EAAB..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-bold text-gray-500 mb-1">AI Persona (System Instruction)</label>
+                    <textarea id="newPagePersona" rows="4" placeholder="Example: You are a polite salesman for 'My Fashion Shop'. You sell Sarees and Panjabis. Reply in Bangla..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                    <p class="text-xs text-gray-400 mt-1">Leave empty to use default AI behavior.</p>
+                </div>
+            </div>
+            <div class="flex justify-end gap-2 mt-4">
+                <button onclick="closeAddPageModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
+                <button onclick="savePage()" class="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Save / Update</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .toggle-checkbox:checked { right: 0; border-color: #68D391; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
+        .toggle-checkbox { right: 0; z-index: 1; border-color: #CBD5E0; transition: all 0.2s ease; }
+    </style>
+
+    <script>
+        let authToken = localStorage.getItem('adminPass');
+        let currentActiveUser = null;
+        let currentActivePage = null;
+
+        if (authToken) {
+            checkLogin(true);
+        }
+
+        async function checkLogin(isAuto = false) {
+            const pass = isAuto ? authToken : document.getElementById('adminPass').value;
+            try {
+                const res = await fetch('/api/stats', { headers: { 'x-admin-pass': pass } });
+                if (res.ok) {
+                    localStorage.setItem('adminPass', pass);
+                    authToken = pass;
+                    document.getElementById('loginModal').classList.add('hidden');
+                    document.getElementById('dashboard').classList.remove('hidden');
+                    loadDashboardData();
+                } else if(!isAuto) {
+                    document.getElementById('loginError').classList.remove('hidden');
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function logout() { 
+            localStorage.removeItem('adminPass'); 
+            location.reload(); 
+        }
+
+        function showSection(sectionId) {
+            ['inbox', 'stats', 'pages'].forEach(id => {
+                document.getElementById(`${id}-section`).classList.add('hidden');
+                document.getElementById(`btn-${id}`).classList.remove('bg-gray-700', 'border-blue-500');
+                document.getElementById(`btn-${id}`).classList.add('border-transparent');
+            });
+            document.getElementById(`${sectionId}-section`).classList.remove('hidden');
+            document.getElementById(`btn-${sectionId}`).classList.add('bg-gray-700', 'border-blue-500');
+            document.getElementById(`btn-${sectionId}`).classList.remove('border-transparent');
+
+            if(sectionId === 'inbox') loadConversations();
+            if(sectionId === 'pages') fetchPages();
+            if(sectionId === 'stats') fetchStats();
+        }
+
+        async function loadDashboardData() {
+            showSection('inbox'); 
+        }
+
+        // --- INBOX LOGIC ---
+        async function loadConversations() {
+            try {
+                const res = await fetch('/api/inbox/conversations', { headers: { 'x-admin-pass': authToken } });
+                const users = await res.json();
+                const list = document.getElementById('conversation-list');
+                list.innerHTML = '';
+                
+                if(users.length === 0) {
+                    list.innerHTML = '<div class="p-4 text-center text-gray-400">No conversations yet.</div>';
+                    return;
+                }
+
+                users.forEach(u => {
+                    list.innerHTML += `
+                        <div onclick="openChat('${u.pageId}', '${u.userId}')" class="p-4 border-b hover:bg-blue-50 cursor-pointer transition flex items-center gap-3">
+                            <div class="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+                                <i class="fa-solid fa-user"></i>
+                            </div>
+                            <div class="flex-1 overflow-hidden">
+                                <p class="font-bold text-sm truncate">User: ${u.userId}</p>
+                                <p class="text-xs text-gray-500 truncate">Page: ${u.pageId}</p>
+                                <p class="text-xs text-gray-400 mt-1 truncate">${moment(u.lastInteraction).fromNow()}</p>
+                            </div>
+                        </div>
+                    `;
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function openChat(pageId, userId) {
+            currentActivePage = pageId;
+            currentActiveUser = userId;
+            
+            document.getElementById('chat-header').classList.remove('hidden');
+            document.getElementById('messages-container').classList.remove('hidden');
+            document.getElementById('chat-input-area').classList.remove('hidden');
+            document.getElementById('active-user-id').innerText = `User: ${userId}`;
+            document.getElementById('active-page-id').innerText = `Page ID: ${pageId}`;
+
+            try {
+                const statusRes = await fetch(`/api/inbox/ai-status?pageId=${pageId}&userId=${userId}`, { headers: { 'x-admin-pass': authToken } });
+                const statusData = await statusRes.json();
+                const toggle = document.getElementById('ai-toggle');
+                
+                toggle.checked = !statusData.paused;
+                updateToggleUI(toggle.checked);
+
+                await refreshChat();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function refreshChat() {
+            if(!currentActiveUser) return;
+            try {
+                const res = await fetch(`/api/inbox/messages?pageId=${currentActivePage}&userId=${currentActiveUser}`, { headers: { 'x-admin-pass': authToken } });
+                const messages = await res.json();
+                
+                const container = document.getElementById('messages-container');
+                container.innerHTML = '';
+                
+                messages.forEach(msg => {
+                    const isUser = msg.sender === 'user';
+                    const isAdmin = msg.sender === 'admin';
+                    const align = isUser ? 'justify-start' : 'justify-end';
+                    const bg = isUser ? 'bg-white border text-gray-800' : (isAdmin ? 'bg-blue-600 text-white' : 'bg-green-100 text-green-900');
+                    const senderLabel = isUser ? 'User' : (isAdmin ? 'You' : 'AI Bot');
+
+                    container.innerHTML += `
+                        <div class="flex ${align} mb-4">
+                            <div class="max-w-[70%]">
+                                <p class="text-xs text-gray-400 mb-1 ${isUser ? 'text-left' : 'text-right'}">${senderLabel} • ${moment(msg.timestamp).format('LT')}</p>
+                                <div class="${bg} p-3 rounded-lg shadow-sm text-sm whitespace-pre-wrap">${msg.text}</div>
+                            </div>
+                        </div>
+                    `;
+                });
+                container.scrollTop = container.scrollHeight;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function updateToggleUI(isChecked) {
+            const statusText = document.getElementById('ai-status-text');
+            if(isChecked) {
+                statusText.innerText = "AI ON";
+                statusText.className = "text-xs font-bold text-green-600 ml-2";
+            } else {
+                statusText.innerText = "AI PAUSED";
+                statusText.className = "text-xs font-bold text-red-500 ml-2";
+            }
+        }
+
+        async function toggleAI() {
+            const isChecked = document.getElementById('ai-toggle').checked;
+            updateToggleUI(isChecked);
+            
+            try {
+                await fetch('/api/inbox/toggle-ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
+                    body: JSON.stringify({ 
+                        pageId: currentActivePage, 
+                        userId: currentActiveUser, 
+                        paused: !isChecked 
+                    })
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        function handleEnter(e) {
+            if(e.key === 'Enter') {
+                sendReply();
+            }
+        }
+
+        async function sendReply() {
+            const input = document.getElementById('reply-input');
+            const text = input.value.trim();
+            if(!text || !currentActiveUser) return;
+
+            input.value = '';
+            
+            try {
+                const res = await fetch('/api/inbox/reply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
+                    body: JSON.stringify({
+                        pageId: currentActivePage,
+                        userId: currentActiveUser,
+                        text: text
+                    })
+                });
+
+                if(res.ok) {
+                    await refreshChat();
+                } else {
+                    alert("Failed to send message!");
+                }
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        // --- STATS & PAGES ---
+        async function fetchStats() {
+            try {
+                const res = await fetch('/api/stats', { headers: { 'x-admin-pass': authToken } });
+                const data = await res.json();
+                document.getElementById('total-logs').innerText = data.totalLogs;
+                document.getElementById('total-pages').innerText = data.totalPages;
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        async function fetchPages() {
+            try {
+                const res = await fetch('/api/pages', { headers: { 'x-admin-pass': authToken } });
+                const pages = await res.json();
+                const tbody = document.getElementById('pages-table-body');
+                tbody.innerHTML = '';
+                pages.forEach(page => {
+                    const personaShort = page.System_Prompt ? page.System_Prompt.substring(0, 50) + '...' : '<span class="text-gray-400 italic">Default</span>';
+                    
+                    tbody.innerHTML += `
+                        <tr class="border-b">
+                            <td class="p-4 font-bold">${page.Page_Name || 'Unknown'}</td>
+                            <td class="p-4 font-mono text-sm">${page.Page_ID}</td>
+                            <td class="p-4 text-sm text-gray-600">${personaShort}</td>
+                            <td class="p-4 text-right">
+                                <button onclick="editPage('${page.Page_Name}', '${page.Page_ID}', '${page.System_Prompt ? page.System_Prompt.replace(/'/g, "\\'") : ''}')" class="text-blue-600 hover:underline text-sm">Edit</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+            } catch (e) {
+                console.error(e);
+            }
+        }
+        
+        function openAddPageModal() { 
+            // Reset form
+            document.getElementById('newPageName').value = '';
+            document.getElementById('newPageId').value = '';
+            document.getElementById('newPageToken').value = '';
+            document.getElementById('newPagePersona').value = '';
+            document.getElementById('addPageModal').classList.remove('hidden'); 
+        }
+
+        function editPage(name, id, persona) {
+            // Fill form with existing data
+            document.getElementById('newPageName').value = name;
+            document.getElementById('newPageId').value = id;
+            document.getElementById('newPageToken').value = ''; // Token kept hidden for security
+            document.getElementById('newPagePersona').value = persona;
+            document.getElementById('addPageModal').classList.remove('hidden');
+        }
+
+        function closeAddPageModal() { 
+            document.getElementById('addPageModal').classList.add('hidden'); 
+        }
+        
+        async function savePage() {
+            const name = document.getElementById('newPageName').value;
+            const id = document.getElementById('newPageId').value;
+            const token = document.getElementById('newPageToken').value;
+            const persona = document.getElementById('newPagePersona').value;
+
+            if (!id) { alert("Page ID is required!"); return; }
+
+            try {
+                await fetch('/api/pages', { 
+                    method: 'POST', 
+                    headers: {'Content-Type': 'application/json', 'x-admin-pass': authToken}, 
+                    body: JSON.stringify({name, id, token, persona}) 
+                });
+                
+                closeAddPageModal(); 
+                fetchPages();
+            } catch (e) {
+                console.error(e);
+            }
+        }
+    </script>
+</body>
+</html>
