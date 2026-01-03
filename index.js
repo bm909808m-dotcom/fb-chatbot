@@ -1,6 +1,6 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard + Custom Persona + Auto Refresh
- * Features: Live Chat, Human Takeover, AI Pause/Resume, Name Fetching
+ * Fixed: Page Token Not Found Issue & AI Toggle Logic
  */
 
 const express = require('express');
@@ -14,7 +14,6 @@ require('dotenv').config();
 const app = express();
 app.use(express.json());
 
-// পাবলিক ফোল্ডার পাথ
 const publicPath = path.join(__dirname, 'public');
 app.use(express.static(publicPath));
 
@@ -44,72 +43,76 @@ async function getDb() {
     return dbClient.db(DB_NAME);
 }
 
-// ইউজারের নাম ফেসবুক থেকে নিয়ে আসার ফাংশন (NEW)
+// FIX: পেজ আইডি স্ট্রিং বা নম্বর যাই হোক না কেন, খুঁজে বের করবে
+async function getPageData(pageId) {
+    const db = await getDb();
+    // প্রথমে সরাসরি স্ট্রিং দিয়ে খোঁজা
+    let data = await db.collection(COL_TOKENS).findOne({ Page_ID: pageId.toString() });
+    
+    // না পেলে, নম্বর হিসেবে চেষ্টা করা (যদি CSV আপলোডে নম্বর হয়ে থাকে)
+    if (!data) {
+        // যদি pageId তে শুধু সংখ্যা থাকে
+        if (/^\d+$/.test(pageId)) {
+            data = await db.collection(COL_TOKENS).findOne({ Page_ID: parseInt(pageId) });
+        }
+    }
+    return data;
+}
+
 async function getUserProfile(userId, pageAccessToken) {
     try {
         const url = `https://graph.facebook.com/${userId}?fields=first_name,last_name,profile_pic&access_token=${pageAccessToken}`;
         const res = await axios.get(url);
         const userData = res.data;
         return `${userData.first_name} ${userData.last_name}`;
-    } catch (error) {
-        // যদি নাম না পাওয়া যায়, তবে কিছু রিটার্ন করবে না
-        return null;
-    }
+    } catch (error) { return null; }
 }
 
-// মেসেজ সেভ করার সময় নামও সেভ করা হবে (Updated)
 async function saveMessage(pageId, userId, sender, text, pageToken = null) {
     try {
         const db = await getDb();
+        // স্ট্রিং হিসেবে সেভ করা নিশ্চিত করা
+        const safePageId = pageId.toString();
+        const safeUserId = userId.toString();
+
         await db.collection(COL_MESSAGES).insertOne({
-            pageId,
-            userId,
+            pageId: safePageId,
+            userId: safeUserId,
             sender, 
             text,
             timestamp: new Date()
         });
         
-        // কনভারসেশন স্টেট আপডেট (নাম সহ)
         const updateData = { lastInteraction: new Date() };
         
-        // যদি ইউজার হয় এবং আমাদের কাছে টোকেন থাকে, তবে নাম আনার চেষ্টা করব
         if (sender === 'user' && pageToken) {
-            // আগে চেক করি নাম অলরেডি আছে কিনা
-            const existingState = await db.collection(COL_CONV_STATE).findOne({ pageId, userId });
+            const existingState = await db.collection(COL_CONV_STATE).findOne({ pageId: safePageId, userId: safeUserId });
             if (!existingState || !existingState.userName) {
-                const name = await getUserProfile(userId, pageToken);
-                if (name) {
-                    updateData.userName = name;
-                }
+                const name = await getUserProfile(safeUserId, pageToken);
+                if (name) updateData.userName = name;
             }
         }
 
         await db.collection(COL_CONV_STATE).updateOne(
-            { pageId, userId },
+            { pageId: safePageId, userId: safeUserId },
             { 
                 $set: updateData,
                 $setOnInsert: { aiPaused: false } 
             },
             { upsert: true }
         );
-    } catch (e) { 
-        console.error("Save Msg Error:", e); 
-    }
+    } catch (e) { console.error("Save Msg Error:", e); }
 }
 
 async function isAiPaused(pageId, userId) {
     try {
         const db = await getDb();
-        const state = await db.collection(COL_CONV_STATE).findOne({ pageId, userId });
+        const state = await db.collection(COL_CONV_STATE).findOne({ 
+            pageId: pageId.toString(), 
+            userId: userId.toString() 
+        });
         return state ? state.aiPaused : false;
-    } catch (e) { 
-        return false; 
-    }
-}
-
-async function getPageData(pageId) {
-    const db = await getDb();
-    return await db.collection(COL_TOKENS).findOne({ Page_ID: pageId });
+    } catch (e) { return false; }
 }
 
 // --- ADMIN API ENDPOINTS ---
@@ -139,7 +142,7 @@ app.get('/api/inbox/messages', auth, async (req, res) => {
         const { pageId, userId } = req.query;
         const db = await getDb();
         const msgs = await db.collection(COL_MESSAGES)
-            .find({ pageId, userId })
+            .find({ pageId: pageId.toString(), userId: userId.toString() })
             .sort({ timestamp: 1 }) 
             .limit(100)
             .toArray();
@@ -155,26 +158,35 @@ app.get('/api/inbox/ai-status', auth, async (req, res) => {
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// FIX: Toggle AI Logic updated
 app.post('/api/inbox/toggle-ai', auth, async (req, res) => {
     try {
         const { pageId, userId, paused } = req.body;
+        if(!pageId || !userId) return res.status(400).json({error: "Missing ID"});
+
         const db = await getDb();
         await db.collection(COL_CONV_STATE).updateOne(
-            { pageId, userId },
+            { pageId: pageId.toString(), userId: userId.toString() },
             { $set: { aiPaused: paused } },
             { upsert: true }
         );
-        res.json({ success: true });
+        res.json({ success: true, status: paused ? "Paused" : "Active" });
     } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// FIX: Reply Logic with Better Token Search
 app.post('/api/inbox/reply', auth, async (req, res) => {
     try {
         const { pageId, userId, text } = req.body;
+        console.log(`Sending reply to ${userId} from page ${pageId}`);
+
         const pageData = await getPageData(pageId);
         
         if (!pageData || !pageData.Access_Token) {
-            return res.status(400).json({ error: "Page token not found" });
+            console.error(`Token missing for Page ID: ${pageId}. Check page_tokens collection.`);
+            return res.status(400).json({ 
+                error: `Page token not found for ID: ${pageId}. Please re-add the page in 'Pages' tab.` 
+            });
         }
 
         await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
@@ -185,8 +197,12 @@ app.post('/api/inbox/reply', auth, async (req, res) => {
         await saveMessage(pageId, userId, 'admin', text);
         res.json({ success: true });
     } catch (e) { 
-        console.error(e);
-        res.status(500).json({ error: e.message }); 
+        console.error("Send Reply Error:", e.response ? e.response.data : e.message);
+        res.status(500).json({ 
+            error: e.response && e.response.data && e.response.data.error 
+                ? e.response.data.error.message 
+                : e.message 
+        }); 
     }
 });
 
@@ -213,8 +229,11 @@ app.post('/api/pages', auth, async (req, res) => {
         if (token) updateFields.Access_Token = token; 
         if (persona !== undefined) updateFields.System_Prompt = persona;
 
+        // Ensure ID is saved as String to match Webhook
+        const safeId = id.toString();
+
         await db.collection(COL_TOKENS).updateOne(
-            { Page_ID: id },
+            { Page_ID: safeId },
             { $set: updateFields },
             { upsert: true }
         );
@@ -244,7 +263,7 @@ app.post('/webhook', async (req, res) => {
         res.status(200).send('EVENT_RECEIVED');
 
         for (const entry of body.entry) {
-            const pageId = entry.id;
+            const pageId = entry.id; // Facebook sends this as String
             if (entry.messaging) {
                 for (const event of entry.messaging) {
                     if (event.message && event.message.text) {
@@ -253,13 +272,10 @@ app.post('/webhook', async (req, res) => {
 
                         if (senderId === pageId) continue;
 
-                        // 0. Get Page Token for Name Fetching
                         const pageData = await getPageData(pageId);
                         
-                        // 1. Save User Message (and Fetch Name)
                         await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
 
-                        // 2. Check Pause Status
                         const paused = await isAiPaused(pageId, senderId);
                         if (paused) {
                             console.log(`AI Paused for user ${senderId}.`);
@@ -267,7 +283,10 @@ app.post('/webhook', async (req, res) => {
                         }
 
                         try {
-                            if (!pageData || !pageData.Access_Token) continue;
+                            if (!pageData || !pageData.Access_Token) {
+                                console.log(`Missing token for Page ${pageId}, skipping AI reply.`);
+                                continue;
+                            }
 
                             const defaultPersona = "You are a helpful customer support assistant. Keep replies short and polite.";
                             const systemInstruction = pageData.System_Prompt || defaultPersona;
@@ -277,13 +296,11 @@ app.post('/webhook', async (req, res) => {
                             const result = await model.generateContent(chatPrompt);
                             const aiReply = result.response.text();
 
-                            // 4. Send Reply
                             await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
                                 recipient: { id: senderId },
                                 message: { text: aiReply }
                             });
 
-                            // 5. Save AI Message
                             await saveMessage(pageId, senderId, 'ai', aiReply);
 
                         } catch (err) {
