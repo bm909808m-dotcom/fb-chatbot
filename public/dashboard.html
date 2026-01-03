@@ -84,6 +84,7 @@
                             <div>
                                 <h3 class="font-bold text-lg flex items-center gap-2">
                                     <i class="fa-solid fa-user-circle text-gray-400"></i>
+                                    <!-- নাম এবং আইডি এখানে দেখাবে -->
                                     <span id="active-user-name">Loading...</span>
                                 </h3>
                                 <p class="text-xs text-gray-500" id="active-page-id">Page: ...</p>
@@ -262,8 +263,11 @@
                 // UI Rebuild
                 let html = '';
                 users.forEach(u => {
-                    // ইউজার নেম থাকলে দেখাবে, না থাকলে আইডি
-                    const displayName = u.userName || `User: ${u.userId}`;
+                    // নাম এবং আইডি ফরম্যাটিং (লিস্টের জন্য)
+                    const displayName = u.userName 
+                        ? `<span class="font-bold">${u.userName}</span> <span class="text-xs text-gray-500">(${u.userId})</span>` 
+                        : `<span class="font-bold">User: ${u.userId}</span>`;
+                        
                     const activeClass = (currentActiveUser === u.userId) ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50';
                     
                     html += `
@@ -272,7 +276,7 @@
                                 ${u.userName ? u.userName.charAt(0).toUpperCase() : '<i class="fa-solid fa-user"></i>'}
                             </div>
                             <div class="flex-1 overflow-hidden">
-                                <p class="font-bold text-sm truncate text-gray-800">${displayName}</p>
+                                <p class="text-sm text-gray-800 truncate">${displayName}</p>
                                 <p class="text-xs text-gray-500 truncate">Page: ${u.pageId}</p>
                                 <p class="text-xs text-gray-400 mt-1 truncate flex items-center gap-1">
                                     <i class="fa-regular fa-clock"></i> ${moment(u.lastInteraction).fromNow()}
@@ -289,16 +293,18 @@
             currentActivePage = pageId;
             currentActiveUser = userId;
             
-            // Highlight active user in list immediately
             loadConversations(); 
 
             document.getElementById('chat-header').classList.remove('hidden');
             document.getElementById('messages-container').classList.remove('hidden');
             document.getElementById('chat-input-area').classList.remove('hidden');
             
-            // নাম সেট করা
-            const displayName = userName && userName !== 'undefined' && userName !== '' ? userName : `User: ${userId}`;
-            document.getElementById('active-user-name').innerText = displayName;
+            // নাম এবং আইডি সেট করা (হেডারের জন্য)
+            const nameDisplay = (userName && userName !== 'undefined' && userName !== '') 
+                ? `${userName} <span class="text-xs text-gray-400 font-normal ml-2">(${userId})</span>` 
+                : `User: ${userId}`;
+                
+            document.getElementById('active-user-name').innerHTML = nameDisplay;
             document.getElementById('active-page-id').innerText = `Page ID: ${pageId}`;
 
             try {
@@ -324,7 +330,6 @@
                 const res = await fetch(`/api/inbox/messages?pageId=${currentActivePage}&userId=${currentActiveUser}`, { headers: { 'x-admin-pass': authToken } });
                 const messages = await res.json();
                 
-                // If background refresh and no new messages, do nothing (to preserve scroll)
                 if(isBackground && messages.length === lastMsgCount) return;
                 lastMsgCount = messages.length;
 
@@ -336,7 +341,6 @@
                     const isAdmin = msg.sender === 'admin';
                     
                     const align = isUser ? 'justify-start' : 'justify-end';
-                    // Colors: User=White, Admin=Blue, AI=Green
                     const bubbleColor = isUser ? 'bg-white border text-gray-800' : (isAdmin ? 'bg-blue-600 text-white' : 'bg-green-100 text-green-900 border border-green-200');
                     const senderLabel = isUser ? 'Customer' : (isAdmin ? 'You' : 'AI Bot');
                     const labelColor = isUser ? 'text-gray-400' : (isAdmin ? 'text-blue-600' : 'text-green-600');
@@ -353,7 +357,6 @@
                 });
                 container.innerHTML = html;
                 
-                // Only scroll to bottom if it's not a background refresh or if near bottom
                 if(!isBackground) container.scrollTop = container.scrollHeight;
             } catch (e) { console.error(e); }
         }
@@ -373,16 +376,31 @@
             const isChecked = document.getElementById('ai-toggle').checked;
             updateToggleUI(isChecked);
             
-            // Save state
-            await fetch('/api/inbox/toggle-ai', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
-                body: JSON.stringify({ 
-                    pageId: currentActivePage, 
-                    userId: currentActiveUser, 
-                    paused: !isChecked // Checked means ON (Not Paused)
-                })
-            });
+            try {
+                // Save state
+                const res = await fetch('/api/inbox/toggle-ai', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
+                    body: JSON.stringify({ 
+                        pageId: currentActivePage, 
+                        userId: currentActiveUser, 
+                        paused: !isChecked // Checked means ON (Not Paused)
+                    })
+                });
+
+                if(!res.ok) {
+                    console.error("Failed to save AI state");
+                    // Revert UI if failed
+                    document.getElementById('ai-toggle').checked = !isChecked;
+                    updateToggleUI(!isChecked);
+                    alert("Failed to change AI status!");
+                }
+            } catch (e) {
+                console.error(e);
+                // Revert UI if failed
+                document.getElementById('ai-toggle').checked = !isChecked;
+                updateToggleUI(!isChecked);
+            }
         }
 
         function handleEnter(e) { if(e.key === 'Enter') sendReply(); }
@@ -394,20 +412,26 @@
 
             input.value = ''; // Clear immediately
             
-            const res = await fetch('/api/inbox/reply', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
-                body: JSON.stringify({
-                    pageId: currentActivePage,
-                    userId: currentActiveUser,
-                    text: text
-                })
-            });
+            try {
+                const res = await fetch('/api/inbox/reply', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
+                    body: JSON.stringify({
+                        pageId: currentActivePage,
+                        userId: currentActiveUser,
+                        text: text
+                    })
+                });
 
-            if(res.ok) {
-                refreshChat(); // Immediate refresh
-            } else {
-                alert("Error sending message!");
+                if(res.ok) {
+                    refreshChat(); // Immediate refresh
+                } else {
+                    const err = await res.json();
+                    alert("Failed to send: " + (err.error || "Unknown Error"));
+                }
+            } catch (e) {
+                console.error(e);
+                alert("Error sending message! Check console.");
             }
         }
 
