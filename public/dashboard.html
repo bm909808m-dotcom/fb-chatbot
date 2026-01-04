@@ -84,9 +84,13 @@
                             <div>
                                 <h3 class="font-bold text-lg flex items-center gap-2">
                                     <i class="fa-solid fa-user-circle text-gray-400"></i>
+                                    <!-- নাম এবং আইডি এখানে দেখাবে -->
                                     <span id="active-user-name">Loading...</span>
                                 </h3>
-                                <p class="text-xs text-gray-500" id="active-page-id">Page: ...</p>
+                                <!-- পেজ নেম আপডেট (UPDATE) -->
+                                <p class="text-xs text-gray-500 flex items-center gap-1" id="active-page-id">
+                                    <i class="fa-brands fa-facebook"></i> Page: ...
+                                </p>
                             </div>
                             <div class="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border">
                                 <span class="text-sm font-medium text-gray-700">AI Reply:</span>
@@ -182,6 +186,9 @@
         let currentActiveUser = null;
         let currentActivePage = null;
         let pollingInterval = null;
+        
+        // পেজের নাম সেভ করে রাখার জন্য (Cache)
+        let pageNameMap = {}; 
 
         if (authToken) checkLogin(true);
 
@@ -233,7 +240,22 @@
             if(sectionId === 'stats') fetchStats();
         }
 
-        async function loadDashboardData() { showSection('inbox'); }
+        async function loadDashboardData() {
+            // প্রথমে পেজের নামগুলো লোড করে নিই (UPDATE)
+            await fetchPageNames();
+            showSection('inbox');
+        }
+
+        // পেজের নাম লোড করার ফাংশন (NEW)
+        async function fetchPageNames() {
+            try {
+                const res = await fetch('/api/pages', { headers: { 'x-admin-pass': authToken } });
+                const pages = await res.json();
+                pages.forEach(p => {
+                    pageNameMap[String(p.Page_ID)] = p.Page_Name;
+                });
+            } catch(e) { console.error(e); }
+        }
 
         let lastConvsHash = "";
 
@@ -259,6 +281,9 @@
                         ? `<span class="font-bold">${u.userName}</span> <span class="text-xs text-gray-500">(${u.userId})</span>` 
                         : `<span class="font-bold">User: ${u.userId}</span>`;
                         
+                    // পেজের নাম বের করা (UPDATE)
+                    const pageName = pageNameMap[String(u.pageId)] || u.pageId;
+
                     const activeClass = (currentActiveUser === u.userId) ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50';
                     
                     html += `
@@ -268,7 +293,8 @@
                             </div>
                             <div class="flex-1 overflow-hidden">
                                 <p class="text-sm text-gray-800 truncate">${displayName}</p>
-                                <p class="text-xs text-gray-500 truncate">Page: ${u.pageId}</p>
+                                <!-- পেজ নেম শো করা -->
+                                <p class="text-xs text-gray-600 truncate font-medium">Page: ${pageName}</p>
                                 <p class="text-xs text-gray-400 mt-1 truncate flex items-center gap-1">
                                     <i class="fa-regular fa-clock"></i> ${moment(u.lastInteraction).fromNow()}
                                 </p>
@@ -295,7 +321,10 @@
                 : `User: ${userId}`;
                 
             document.getElementById('active-user-name').innerHTML = nameDisplay;
-            document.getElementById('active-page-id').innerText = `Page ID: ${pageId}`;
+
+            // পেজের নাম এবং আইডি হেডারে সেট করা (UPDATE)
+            const pName = pageNameMap[String(pageId)] || "Unknown Page";
+            document.getElementById('active-page-id').innerHTML = `<i class="fa-brands fa-facebook text-blue-600"></i> ${pName} <span class="text-gray-400 text-[10px] ml-1">(${pageId})</span>`;
 
             try {
                 const statusRes = await fetch(`/api/inbox/ai-status?pageId=${pageId}&userId=${userId}`, { headers: { 'x-admin-pass': authToken } });
@@ -361,7 +390,6 @@
         }
 
         async function toggleAI() {
-            // FIX: Ensure chat is active before toggling
             if(!currentActiveUser || !currentActivePage) {
                 console.error("No active chat to toggle AI");
                 return;
@@ -434,6 +462,9 @@
         }
 
         async function fetchPages() {
+            // পেজের নাম ম্যাপও আপডেট করা দরকার যদি নতুন পেজ আসে
+            await fetchPageNames();
+            
             const res = await fetch('/api/pages', { headers: { 'x-admin-pass': authToken } });
             const pages = await res.json();
             const tbody = document.getElementById('pages-table-body');
