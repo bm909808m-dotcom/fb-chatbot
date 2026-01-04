@@ -1,12 +1,13 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard + Custom Persona + Auto Refresh
  * Fixed: Page Token Not Found Issue & AI Toggle Logic
+ * Updated: Robust AI Error Handling & Safety Settings
  */
 
 const express = require('express');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI } = require("@google/generative-ai");
+const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -30,8 +31,34 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || "my_secure_token_2026";
 const ADMIN_PASSWORD = process.env.ADMIN_PASS || "admin123"; 
 
+// Check API Key on Startup
+if (!GEMINI_API_KEY) {
+    console.error("❌ CRITICAL ERROR: GEMINI_API_KEY is missing in Environment Variables!");
+}
+
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ 
+    model: "gemini-1.5-flash",
+    // Safety Settings Relaxed (যাতে সাধারণ প্রশ্নে ব্লক না করে)
+    safetySettings: [
+        {
+            category: HarmCategory.HARM_CATEGORY_HARASSMENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+            category: HarmCategory.HARM_CATEGORY_HATE_SPEECH,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+            category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+        {
+            category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT,
+            threshold: HarmBlockThreshold.BLOCK_NONE,
+        },
+    ]
+});
 
 // --- DATABASE HELPER ---
 let dbClient;
@@ -288,13 +315,18 @@ app.post('/webhook', async (req, res) => {
                                 continue;
                             }
 
+                            console.log(`🤖 Generating AI reply for User: ${senderId}`);
+
                             const defaultPersona = "You are a helpful customer support assistant. Keep replies short and polite.";
                             const systemInstruction = pageData.System_Prompt || defaultPersona;
 
                             const chatPrompt = `System: ${systemInstruction}\nUser: "${userMsg}"\nReply (in Bangla/English as appropriate):`;
                             
                             const result = await model.generateContent(chatPrompt);
-                            const aiReply = result.response.text();
+                            const response = await result.response;
+                            const aiReply = response.text();
+                            
+                            console.log(`✅ AI Reply generated: ${aiReply.substring(0, 20)}...`);
 
                             await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
                                 recipient: { id: senderId },
@@ -304,7 +336,7 @@ app.post('/webhook', async (req, res) => {
                             await saveMessage(pageId, senderId, 'ai', aiReply);
 
                         } catch (err) {
-                            console.error("AI Error:", err.message);
+                            console.error("❌ AI/Facebook Error:", err);
                         }
                     }
                 }
