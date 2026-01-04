@@ -11,7 +11,6 @@
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
         body { font-family: 'Inter', sans-serif; }
         .chat-bubble { max-width: 75%; }
-        /* কাস্টম স্ক্রলবার */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #f1f1f1; }
         ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 10px; }
@@ -51,7 +50,7 @@
                         <i class="fa-solid fa-inbox"></i> Live Inbox
                     </button>
                     <button onclick="showSection('pages')" class="w-full text-left p-4 hover:bg-gray-700 border-l-4 border-transparent flex items-center gap-3 transition-colors" id="btn-pages">
-                        <i class="fa-brands fa-facebook"></i> Pages & Persona
+                        <i class="fa-brands fa-facebook"></i> Pages & Rules
                     </button>
                     <button onclick="showSection('stats')" class="w-full text-left p-4 hover:bg-gray-700 border-l-4 border-transparent flex items-center gap-3 transition-colors" id="btn-stats">
                         <i class="fa-solid fa-chart-line"></i> Statistics
@@ -64,7 +63,6 @@
                 
                 <!-- INBOX SECTION -->
                 <div id="inbox-section" class="flex h-full w-full">
-                    <!-- Inbox: Conversation List (Left) -->
                     <div class="w-1/3 bg-white border-r flex flex-col min-w-[250px]">
                         <div class="p-4 border-b bg-gray-50 flex justify-between items-center">
                             <h2 class="font-bold text-lg">Inbox</h2>
@@ -77,23 +75,17 @@
                         </div>
                     </div>
 
-                    <!-- Inbox: Chat Window (Right) -->
                     <div class="flex-1 flex flex-col bg-gray-100 relative" id="chat-window">
-                        <!-- Chat Header -->
                         <div id="chat-header" class="p-4 bg-white border-b flex justify-between items-center hidden">
                             <div>
                                 <h3 class="font-bold text-lg flex items-center gap-2">
                                     <i class="fa-solid fa-user-circle text-gray-400"></i>
-                                    <!-- নাম এবং আইডি এখানে দেখাবে -->
                                     <span id="active-user-name">Loading...</span>
                                 </h3>
-                                <!-- পেজ নেম আপডেট (UPDATE) -->
-                                <p class="text-xs text-gray-500 flex items-center gap-1" id="active-page-id">
-                                    <i class="fa-brands fa-facebook"></i> Page: ...
-                                </p>
+                                <p class="text-xs text-gray-500" id="active-page-id">Page: ...</p>
                             </div>
                             <div class="flex items-center gap-3 bg-gray-50 p-2 rounded-lg border">
-                                <span class="text-sm font-medium text-gray-700">AI Reply:</span>
+                                <span class="text-sm font-medium text-gray-700">Auto Reply:</span>
                                 <label class="relative inline-flex items-center cursor-pointer">
                                     <input type="checkbox" id="ai-toggle" class="sr-only peer" onchange="toggleAI()">
                                     <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
@@ -102,15 +94,13 @@
                             </div>
                         </div>
 
-                        <!-- Chat Messages Area -->
                         <div id="messages-container" class="flex-1 overflow-y-auto p-4 space-y-4 hidden scroll-smooth">
                             <div class="flex justify-center items-center h-full text-gray-400 flex-col gap-2">
                                 <i class="fa-regular fa-comments text-4xl"></i>
-                                <p>Select a conversation to start messaging</p>
+                                <p>Select a conversation</p>
                             </div>
                         </div>
 
-                        <!-- Chat Input Area -->
                         <div id="chat-input-area" class="p-4 bg-white border-t hidden">
                             <div class="flex gap-2">
                                 <input type="text" id="reply-input" placeholder="Type a manual reply..." class="flex-1 p-3 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" onkeypress="handleEnter(event)">
@@ -122,9 +112,8 @@
                     </div>
                 </div>
 
-                <!-- OTHER SECTIONS (Stats & Pages) -->
+                <!-- OTHER SECTIONS -->
                 <div id="stats-section" class="p-6 hidden h-full overflow-y-auto">
-                    <!-- Stats Content -->
                     <h2 class="text-2xl font-bold mb-6">Overview</h2>
                     <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div class="bg-white p-6 rounded-lg shadow border-l-4 border-blue-500">
@@ -140,7 +129,7 @@
 
                 <div id="pages-section" class="p-6 hidden h-full overflow-y-auto">
                     <div class="flex justify-between items-center mb-6">
-                        <h2 class="text-2xl font-bold">Connected Pages & Persona</h2>
+                        <h2 class="text-2xl font-bold">Connected Pages & Reply Rules</h2>
                         <button onclick="openAddPageModal()" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700 flex items-center gap-2">
                             <i class="fa-solid fa-plus"></i> Add/Update Page
                         </button>
@@ -151,7 +140,7 @@
                                 <tr class="bg-gray-50 text-gray-600 text-sm uppercase">
                                     <th class="p-4 border-b">Page Name</th>
                                     <th class="p-4 border-b">Page ID</th>
-                                    <th class="p-4 border-b w-1/3">AI Persona</th>
+                                    <th class="p-4 border-b w-1/3">Rules Preview</th>
                                     <th class="p-4 border-b text-right">Action</th>
                                 </tr>
                             </thead>
@@ -164,15 +153,30 @@
         </div>
     </div>
 
-    <!-- Modal for Page Management -->
+    <!-- Modal -->
     <div id="addPageModal" class="fixed inset-0 bg-gray-900 bg-opacity-80 flex items-center justify-center z-50 hidden">
-        <div class="bg-white p-6 rounded-lg shadow-xl w-[500px]">
-            <h2 class="text-xl font-bold mb-4">Manage Facebook Page</h2>
+        <div class="bg-white p-6 rounded-lg shadow-xl w-[600px]">
+            <h2 class="text-xl font-bold mb-4">Manage Page & Rules</h2>
             <div class="space-y-3">
-                <input type="text" id="newPageName" placeholder="Page Name" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
-                <input type="text" id="newPageId" placeholder="Page ID (Required)" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
-                <input type="password" id="newPageToken" placeholder="Access Token" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
-                <textarea id="newPagePersona" rows="4" placeholder="AI Persona / Instruction..." class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none"></textarea>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <label class="text-xs font-bold text-gray-500">Page Name</label>
+                        <input type="text" id="newPageName" placeholder="e.g. My Shop" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                    <div>
+                        <label class="text-xs font-bold text-gray-500">Page ID (Required)</label>
+                        <input type="text" id="newPageId" placeholder="e.g. 123456789" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                    </div>
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500">Access Token (Optional if updating rules)</label>
+                    <input type="password" id="newPageToken" placeholder="Leave empty to keep existing token" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none">
+                </div>
+                <div>
+                    <label class="text-xs font-bold text-gray-500">Auto-Reply Rules (Format: keyword -> reply)</label>
+                    <textarea id="newPagePersona" rows="8" class="w-full p-2 border rounded focus:ring-2 focus:ring-blue-500 outline-none font-mono text-sm" placeholder="price -> 500tk&#10;hello -> Hi there!&#10;default -> I will get back to you soon."></textarea>
+                    <p class="text-xs text-gray-400 mt-1">One rule per line. Use 'default' for unknown messages.</p>
+                </div>
             </div>
             <div class="flex justify-end gap-2 mt-4">
                 <button onclick="closeAddPageModal()" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancel</button>
@@ -186,8 +190,6 @@
         let currentActiveUser = null;
         let currentActivePage = null;
         let pollingInterval = null;
-        
-        // পেজের নাম সেভ করে রাখার জন্য (Cache)
         let pageNameMap = {}; 
 
         if (authToken) checkLogin(true);
@@ -241,12 +243,10 @@
         }
 
         async function loadDashboardData() {
-            // প্রথমে পেজের নামগুলো লোড করে নিই (UPDATE)
             await fetchPageNames();
             showSection('inbox');
         }
 
-        // পেজের নাম লোড করার ফাংশন (NEW)
         async function fetchPageNames() {
             try {
                 const res = await fetch('/api/pages', { headers: { 'x-admin-pass': authToken } });
@@ -281,9 +281,7 @@
                         ? `<span class="font-bold">${u.userName}</span> <span class="text-xs text-gray-500">(${u.userId})</span>` 
                         : `<span class="font-bold">User: ${u.userId}</span>`;
                         
-                    // পেজের নাম বের করা (UPDATE)
                     const pageName = pageNameMap[String(u.pageId)] || u.pageId;
-
                     const activeClass = (currentActiveUser === u.userId) ? 'bg-blue-50 border-l-4 border-blue-500' : 'hover:bg-gray-50';
                     
                     html += `
@@ -293,7 +291,6 @@
                             </div>
                             <div class="flex-1 overflow-hidden">
                                 <p class="text-sm text-gray-800 truncate">${displayName}</p>
-                                <!-- পেজ নেম শো করা -->
                                 <p class="text-xs text-gray-600 truncate font-medium">Page: ${pageName}</p>
                                 <p class="text-xs text-gray-400 mt-1 truncate flex items-center gap-1">
                                     <i class="fa-regular fa-clock"></i> ${moment(u.lastInteraction).fromNow()}
@@ -321,10 +318,8 @@
                 : `User: ${userId}`;
                 
             document.getElementById('active-user-name').innerHTML = nameDisplay;
-
-            // পেজের নাম এবং আইডি হেডারে সেট করা (UPDATE)
             const pName = pageNameMap[String(pageId)] || "Unknown Page";
-            document.getElementById('active-page-id').innerHTML = `<i class="fa-brands fa-facebook text-blue-600"></i> ${pName} <span class="text-gray-400 text-[10px] ml-1">(${pageId})</span>`;
+            document.getElementById('active-page-id').innerHTML = `<i class="fa-brands fa-facebook text-blue-600"></i> ${pName}`;
 
             try {
                 const statusRes = await fetch(`/api/inbox/ai-status?pageId=${pageId}&userId=${userId}`, { headers: { 'x-admin-pass': authToken } });
@@ -340,18 +335,13 @@
             } catch (e) { console.error(e); }
         }
 
-        let lastMsgCount = 0;
         async function refreshChat(isBackground = false) {
             if(!currentActiveUser) return;
             try {
                 const res = await fetch(`/api/inbox/messages?pageId=${currentActivePage}&userId=${currentActiveUser}`, { headers: { 'x-admin-pass': authToken } });
                 const messages = await res.json();
                 
-                if(isBackground && messages.length === lastMsgCount) return;
-                lastMsgCount = messages.length;
-
                 const container = document.getElementById('messages-container');
-                
                 let html = '';
                 messages.forEach(msg => {
                     const isUser = msg.sender === 'user';
@@ -359,7 +349,7 @@
                     
                     const align = isUser ? 'justify-start' : 'justify-end';
                     const bubbleColor = isUser ? 'bg-white border text-gray-800' : (isAdmin ? 'bg-blue-600 text-white' : 'bg-green-100 text-green-900 border border-green-200');
-                    const senderLabel = isUser ? 'Customer' : (isAdmin ? 'You' : 'AI Bot');
+                    const senderLabel = isUser ? 'Customer' : (isAdmin ? 'You' : 'Auto');
                     const labelColor = isUser ? 'text-gray-400' : (isAdmin ? 'text-blue-600' : 'text-green-600');
 
                     html += `
@@ -390,36 +380,16 @@
         }
 
         async function toggleAI() {
-            if(!currentActiveUser || !currentActivePage) {
-                console.error("No active chat to toggle AI");
-                return;
-            }
-
+            if(!currentActiveUser || !currentActivePage) return;
             const isChecked = document.getElementById('ai-toggle').checked;
             updateToggleUI(isChecked);
-            
             try {
-                const res = await fetch('/api/inbox/toggle-ai', {
+                await fetch('/api/inbox/toggle-ai', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
-                    body: JSON.stringify({ 
-                        pageId: currentActivePage, 
-                        userId: currentActiveUser, 
-                        paused: !isChecked 
-                    })
+                    body: JSON.stringify({ pageId: currentActivePage, userId: currentActiveUser, paused: !isChecked })
                 });
-
-                if(!res.ok) {
-                    console.error("Failed to save AI state");
-                    document.getElementById('ai-toggle').checked = !isChecked;
-                    updateToggleUI(!isChecked);
-                    alert("Failed to change AI status!");
-                }
-            } catch (e) {
-                console.error(e);
-                document.getElementById('ai-toggle').checked = !isChecked;
-                updateToggleUI(!isChecked);
-            }
+            } catch (e) { console.error(e); }
         }
 
         function handleEnter(e) { if(e.key === 'Enter') sendReply(); }
@@ -428,30 +398,16 @@
             const input = document.getElementById('reply-input');
             const text = input.value.trim();
             if(!text || !currentActiveUser) return;
-
             input.value = ''; 
-            
             try {
                 const res = await fetch('/api/inbox/reply', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-admin-pass': authToken },
-                    body: JSON.stringify({
-                        pageId: currentActivePage,
-                        userId: currentActiveUser,
-                        text: text
-                    })
+                    body: JSON.stringify({ pageId: currentActivePage, userId: currentActiveUser, text: text })
                 });
-
-                if(res.ok) {
-                    refreshChat(); 
-                } else {
-                    const err = await res.json();
-                    alert("⚠️ Message failed: " + (err.error || "Unknown Error") + "\n\nTip: Go to 'Pages & Persona' tab and verify this page is added correctly.");
-                }
-            } catch (e) {
-                console.error(e);
-                alert("Error sending message! Check console.");
-            }
+                if(res.ok) refreshChat(); 
+                else alert("Failed to send");
+            } catch (e) { console.error(e); }
         }
 
         async function fetchStats() {
@@ -462,37 +418,52 @@
         }
 
         async function fetchPages() {
-            // পেজের নাম ম্যাপও আপডেট করা দরকার যদি নতুন পেজ আসে
             await fetchPageNames();
-            
             const res = await fetch('/api/pages', { headers: { 'x-admin-pass': authToken } });
             const pages = await res.json();
             const tbody = document.getElementById('pages-table-body');
             tbody.innerHTML = '';
             pages.forEach(page => {
-                const personaShort = page.System_Prompt ? page.System_Prompt.substring(0, 30) + '...' : '<span class="text-gray-400 italic">Default</span>';
+                const rulesShort = page.System_Prompt ? page.System_Prompt.substring(0, 30).replace(/\n/g, ' ') + '...' : '<span class="text-gray-400 italic">No rules</span>';
                 tbody.innerHTML += `
                     <tr class="border-b">
                         <td class="p-4 font-bold">${page.Page_Name || 'Unknown'}</td>
                         <td class="p-4 font-mono text-xs text-blue-600">${page.Page_ID}</td>
-                        <td class="p-4 text-xs text-gray-600">${personaShort}</td>
+                        <td class="p-4 text-xs text-gray-600 font-mono">${rulesShort}</td>
                         <td class="p-4 text-right">
-                            <button onclick="editPage('${page.Page_Name}', '${page.Page_ID}', '${page.System_Prompt ? page.System_Prompt.replace(/'/g, "\\'") : ''}')" class="text-blue-600 hover:underline text-xs font-bold">Edit</button>
+                            <button onclick="fetchAndEditPage('${page.Page_ID}')" class="text-blue-600 hover:underline text-xs font-bold">Edit Rules</button>
                         </td>
                     </tr>
                 `;
             });
         }
 
-        function openAddPageModal() { document.getElementById('addPageModal').classList.remove('hidden'); }
+        function openAddPageModal() { 
+            // Clear fields for new entry
+            document.getElementById('newPageName').value = '';
+            document.getElementById('newPageId').value = '';
+            document.getElementById('newPageToken').value = '';
+            document.getElementById('newPagePersona').value = '';
+            document.getElementById('addPageModal').classList.remove('hidden'); 
+        }
+
         function closeAddPageModal() { document.getElementById('addPageModal').classList.add('hidden'); }
         
-        function editPage(name, id, persona) {
-            document.getElementById('newPageName').value = name;
-            document.getElementById('newPageId').value = id;
-            document.getElementById('newPageToken').value = ''; 
-            document.getElementById('newPagePersona').value = persona;
-            document.getElementById('addPageModal').classList.remove('hidden');
+        // NEW: Fetch page details from server before editing
+        async function fetchAndEditPage(pageId) {
+            try {
+                const res = await fetch(`/api/page/${pageId}`, { headers: { 'x-admin-pass': authToken } });
+                if(res.ok) {
+                    const page = await res.json();
+                    document.getElementById('newPageName').value = page.Page_Name || '';
+                    document.getElementById('newPageId').value = page.Page_ID || '';
+                    document.getElementById('newPageToken').value = ''; // Don't show token for security
+                    document.getElementById('newPagePersona').value = page.System_Prompt || '';
+                    document.getElementById('addPageModal').classList.remove('hidden');
+                } else {
+                    alert("Error fetching page details");
+                }
+            } catch(e) { console.error(e); }
         }
 
         async function savePage() {
