@@ -2,6 +2,7 @@
  * Facebook Unified Inbox + Admin Dashboard
  * Fix: Explicitly using 'gemini-2.5-flash' based on user's available models
  * Fix: Added detailed tracing logs for webhook debugging
+ * Fix: Added Retry Logic for 429 (Quota Exceeded) Errors & Updated Model Names
  */
 
 const express = require('express');
@@ -43,39 +44,58 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// UPDATED: Prioritizing models present in your account
+// UPDATED: Prioritizing models & fixing 404 errors
 const DEFAULT_MODELS = [
-    "gemini-2.5-flash",        // Primary (From your list)
-    "gemini-2.0-flash",        // Backup
-    "gemini-2.0-flash-lite",   // Lite version
-    "gemini-pro"               // Fallback
+    "gemini-2.5-flash",        // Primary
+    "gemini-2.0-flash",        // Secondary
+    "gemini-1.5-flash",        // Stable Backup
+    "gemini-1.5-pro",          // High Intelligence Backup
+    "gemini-1.0-pro"           // Legacy Backup
 ];
 
-// --- SMART AI RESPONSE FUNCTION ---
+// Helper to pause execution (for retries)
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
+// --- SMART AI RESPONSE FUNCTION WITH RETRY ---
 async function generateAIResponse(prompt) {
     let errorLog = "";
     
     // Loop through defined reliable models
     for (const modelName of DEFAULT_MODELS) {
-        try {
-            console.log(`🤖 AI Engine: Trying ${modelName}...`);
-            const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
-            
-            // Set a timeout for AI generation (10 seconds max)
-            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000));
-            const aiPromise = model.generateContent(prompt);
-            
-            const result = await Promise.race([aiPromise, timeoutPromise]);
-            const response = await result.response;
-            const text = response.text();
-            
-            if (text) {
-                console.log(`✅ AI Success with: ${modelName}`);
-                return { text: text, error: null };
+        let attempts = 0;
+        const maxAttempts = 2; // Try each model up to 2 times (Original + 1 Retry)
+
+        while (attempts < maxAttempts) {
+            try {
+                attempts++;
+                console.log(`🤖 AI Engine: Trying ${modelName} (Attempt ${attempts})...`);
+                
+                const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
+                
+                // Set a timeout for AI generation (15 seconds max)
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
+                const aiPromise = model.generateContent(prompt);
+                
+                const result = await Promise.race([aiPromise, timeoutPromise]);
+                const response = await result.response;
+                const text = response.text();
+                
+                if (text) {
+                    console.log(`✅ AI Success with: ${modelName}`);
+                    return { text: text, error: null };
+                }
+            } catch (error) {
+                const isRateLimit = error.message.includes("429") || error.message.includes("Quota");
+                console.warn(`⚠️ ${modelName} attempt ${attempts} failed:`, error.message);
+                
+                if (isRateLimit && attempts < maxAttempts) {
+                    console.log("⏳ Rate limit hit. Waiting 5 seconds before retry...");
+                    await sleep(5000); // Wait 5s before retrying same model
+                } else {
+                    errorLog += `[${modelName}]: ${error.message} | `;
+                    break; // Move to next model if not rate limit or retries exhausted
+                }
             }
-        } catch (error) {
-            console.warn(`⚠️ ${modelName} failed or timed out:`, error.message);
-            errorLog += `[${modelName}]: ${error.message} | `;
         }
     }
     
@@ -167,7 +187,7 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid green; border-radius:10px;">
                     <h1 style="color:green">SUCCESS! 🎉</h1>
                     <p><b>AI Response:</b> ${result.text}</p>
-                    <p>Gemini 2.5 Flash is working correctly.</p>
+                    <p>AI connection verified.</p>
                 </div>
             `);
         } else {
@@ -175,6 +195,7 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid red; border-radius:10px;">
                     <h1 style="color:red">AI FAILED ❌</h1>
                     <p><b>Errors:</b><br> ${result.error}</p>
+                    <p>If you see "429 Too Many Requests", you have hit Google's free limit. Try waiting a minute.</p>
                 </div>
             `);
         }
