@@ -2,6 +2,7 @@
  * Facebook Unified Inbox + Admin Dashboard
  * Fix: Increased Retry Delay to 20s+ to handle Google's 16s cooldown requirement
  * Fix: Added Fallback Message if all AI models fail due to quota
+ * Update: Added hardcoded API Key fallback
  */
 
 const express = require('express');
@@ -27,7 +28,8 @@ const COL_TOKENS = "page_tokens";
 const COL_MESSAGES = "messages";          
 const COL_CONV_STATE = "conversation_states"; 
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
+// Updated: Using provided API Key as fallback if env var is missing
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyDxPoxdVMgnLqF292FnKTGViqRql-PjkZs";
 const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || "my_secure_token_2026";
 const ADMIN_PASSWORD = process.env.ADMIN_PASS || "admin123"; 
 
