@@ -1,14 +1,12 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Increased Retry Delay to 20s+ to handle Google's 16s cooldown requirement
- * Fix: Added Fallback Message if all AI models fail due to quota
- * Update: Added hardcoded API Key fallback
+ * Feature: Keyword Based Auto-Reply (Manual Logic)
+ * Removed: Google Gemini AI dependencies completely
  */
 
 const express = require('express');
 const axios = require('axios');
 const { MongoClient } = require('mongodb');
-const { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } = require("@google/generative-ai");
 const path = require('path');
 const fs = require('fs');
 require('dotenv').config();
@@ -28,78 +26,41 @@ const COL_TOKENS = "page_tokens";
 const COL_MESSAGES = "messages";          
 const COL_CONV_STATE = "conversation_states"; 
 
-// Updated: Using provided API Key as fallback if env var is missing
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "AIzaSyDxPoxdVMgnLqF292FnKTGViqRql-PjkZs";
 const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || "my_secure_token_2026";
 const ADMIN_PASSWORD = process.env.ADMIN_PASS || "admin123"; 
 
-if (!GEMINI_API_KEY) {
-    console.error("❌ CRITICAL ERROR: GEMINI_API_KEY is missing!");
-}
+// --- MANUAL KEYWORD LOGIC ---
+// এই ফাংশনটি আপনার দেওয়া রুলস চেক করে উত্তর তৈরি করবে
+function getKeywordReply(userMsg, rulesText) {
+    if (!rulesText) return null;
 
-const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "");
-const safetySettings = [
-    { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_HATE_SPEECH, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT, threshold: HarmBlockThreshold.BLOCK_NONE },
-    { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
-];
+    const msg = userMsg.toLowerCase().trim();
+    const lines = rulesText.split('\n');
+    let matchedResponse = null;
+    let defaultResponse = null;
 
-// UPDATED: Model List prioritizing Lite (less quota)
-const DEFAULT_MODELS = [
-    "gemini-2.0-flash-lite-preview-02-05", 
-    "gemini-2.0-flash-lite",
-    "gemini-2.5-flash",
-    "gemini-2.0-flash"
-];
+    for (const line of lines) {
+        // ফরম্যাট: keyword -> response
+        const parts = line.split('->');
+        if (parts.length < 2) continue;
 
-// Helper to pause execution
-const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        const keyword = parts[0].trim().toLowerCase();
+        const response = parts.slice(1).join('->').trim(); // বাকি অংশটুকু রেসপন্স
 
-// --- SMART AI RESPONSE FUNCTION WITH LONG BACKOFF ---
-async function generateAIResponse(prompt) {
-    let errorLog = "";
-    
-    for (const modelName of DEFAULT_MODELS) {
-        let attempts = 0;
-        const maxAttempts = 2; 
+        // ডিফল্ট মেসেজ সেট করা (যদি কোনো কী-ওয়ার্ড না মিলে)
+        if (keyword === 'default' || keyword === 'else') {
+            defaultResponse = response;
+            continue;
+        }
 
-        while (attempts < maxAttempts) {
-            try {
-                attempts++;
-                console.log(`🤖 AI Engine: Trying ${modelName} (Attempt ${attempts})...`);
-                
-                const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
-                
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 25000)); 
-                const aiPromise = model.generateContent(prompt);
-                
-                const result = await Promise.race([aiPromise, timeoutPromise]);
-                const response = await result.response;
-                const text = response.text();
-                
-                if (text) {
-                    console.log(`✅ AI Success with: ${modelName}`);
-                    return { text: text, error: null };
-                }
-            } catch (error) {
-                const isRateLimit = error.message.includes("429") || error.message.includes("Quota");
-                console.warn(`⚠️ ${modelName} attempt ${attempts} failed:`, error.message);
-                
-                if (isRateLimit && attempts < maxAttempts) {
-                    // FIX: Increased delay to 20s because log said "retry in 16s"
-                    const waitTime = 20000; 
-                    console.log(`⏳ Rate limit hit. Waiting ${waitTime/1000} seconds before retry...`);
-                    await sleep(waitTime); 
-                } else {
-                    errorLog += `[${modelName}]: ${error.message} | `;
-                    break; 
-                }
-            }
+        // যদি মেসেজের মধ্যে কী-ওয়ার্ড পাওয়া যায়
+        if (msg.includes(keyword)) {
+            matchedResponse = response;
+            break; // প্রথম ম্যাচ পেলেই থামবে
         }
     }
-    
-    return { text: null, error: errorLog };
+
+    return matchedResponse || defaultResponse;
 }
 
 // --- DATABASE HELPER ---
@@ -172,37 +133,26 @@ const auth = (req, res, next) => {
     else res.status(401).json({ error: "Unauthorized" });
 };
 
-app.get('/test-ai', async (req, res) => {
-    try {
-        if (!GEMINI_API_KEY) return res.send(`<h1 style="color:red">API Key Missing</h1>`);
+// Test Logic Route (No AI)
+app.get('/test-bot', async (req, res) => {
+    const rules = "hello -> Hi there!\nprice -> The price is 500tk.\ndefault -> I don't understand.";
+    const testMsg1 = "hello bot";
+    const testMsg2 = "what is the price?";
+    const testMsg3 = "bla bla";
 
-        const prompt = "Hello Gemini, just say 'Active'";
-        const result = await generateAIResponse(prompt);
-        
-        if (result.text) {
-            res.send(`
-                <div style="font-family:sans-serif; padding:20px; border:2px solid green; border-radius:10px;">
-                    <h1 style="color:green">SUCCESS! 🎉</h1>
-                    <p><b>AI Response:</b> ${result.text}</p>
-                    <p>Gemini is working correctly.</p>
-                </div>
-            `);
-        } else {
-            res.send(`
-                <div style="font-family:sans-serif; padding:20px; border:2px solid red; border-radius:10px;">
-                    <h1 style="color:red">AI FAILED ❌</h1>
-                    <p><b>Errors:</b><br> ${result.error}</p>
-                    <hr>
-                    <p>Quota exceeded. Wait 1-2 minutes before testing again.</p>
-                </div>
-            `);
-        }
-    } catch (e) {
-        res.status(500).send(`Server Error: ${e.message}`);
-    }
+    const reply1 = getKeywordReply(testMsg1, rules);
+    const reply2 = getKeywordReply(testMsg2, rules);
+    const reply3 = getKeywordReply(testMsg3, rules);
+
+    res.send(`
+        <h1>Keyword Bot Test</h1>
+        <p><b>Rules:</b> <pre>${rules}</pre></p>
+        <p>Input: "${testMsg1}" => Output: <b>${reply1}</b></p>
+        <p>Input: "${testMsg2}" => Output: <b>${reply2}</b></p>
+        <p>Input: "${testMsg3}" => Output: <b>${reply3}</b></p>
+    `);
 });
 
-// ... Standard API Routes ...
 app.get('/api/inbox/conversations', auth, async (req, res) => {
     try { const db = await getDb(); res.json(await db.collection(COL_CONV_STATE).find({}).sort({ lastInteraction: -1 }).limit(20).toArray()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -241,11 +191,8 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
-    console.log("📨 Webhook Hit!"); 
-    
     if (req.body.object === 'page') {
         res.status(200).send('EVENT_RECEIVED');
-        
         for (const entry of req.body.entry) {
             const pageId = entry.id;
             if (entry.messaging) {
@@ -253,39 +200,34 @@ app.post('/webhook', async (req, res) => {
                     if (event.message && event.message.text) {
                         const senderId = event.sender.id;
                         const userMsg = event.message.text;
-                        console.log(`👤 User ${senderId} says: ${userMsg}`);
-
                         if (senderId === pageId) continue;
 
                         const pageData = await getPageData(pageId);
                         await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
 
+                        // Pause Logic (এখনও কাজ করবে)
                         if (await isAiPaused(pageId, senderId)) {
-                            console.log(`⏸️ AI is PAUSED for ${senderId}`);
+                            console.log(`⏸️ Bot Paused for ${senderId}`);
                             continue;
                         }
 
                         if (pageData?.Access_Token) {
-                            console.log(`🤖 Generating AI Response...`);
+                            console.log(`🔎 Checking keywords for User: ${senderId}`);
                             
-                            const defaultPersona = `তুমি একজন প্রফেশনাল কাস্টমার সাপোর্ট এজেন্ট, কিন্তু অন্য দিকে তুমি একজন ভাল বন্ধু ও বটে।`;
-                            const systemInstruction = pageData.System_Prompt || defaultPersona;
-                            const fullPrompt = `System: ${systemInstruction}\nUser: "${userMsg}"\nReply (in Bangla unless asked otherwise):`;
+                            // MANUAL KEYWORD LOGIC
+                            // System_Prompt ফিল্ড থেকেই এখন রুলস নেবে
+                            const rulesText = pageData.System_Prompt || "";
+                            const replyText = getKeywordReply(userMsg, rulesText);
 
-                            // Generate Response
-                            const aiResult = await generateAIResponse(fullPrompt);
-
-                            // Handle AI Success or Failure
-                            if (aiResult.text) {
-                                console.log(`✅ Sending to FB: ${aiResult.text.substring(0,20)}...`);
+                            if (replyText) {
+                                console.log(`✅ Match Found! Sending: ${replyText}`);
                                 await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
-                                    recipient: { id: senderId }, message: { text: aiResult.text }
+                                    recipient: { id: senderId }, message: { text: replyText }
                                 }).catch(err => console.error("❌ FB API Error:", err.response?.data || err.message));
-                                await saveMessage(pageId, senderId, 'ai', aiResult.text);
+                                
+                                await saveMessage(pageId, senderId, 'bot', replyText);
                             } else {
-                                console.error("❌ AI Quota Exceeded/Error. Log:", aiResult.error);
-                                // Optional: Send a fallback message to user if quota exceeded
-                                // await axios.post(..., { message: { text: "আমি এখন একটু ব্যস্ত, দয়া করে ১ মিনিট পর নক দিন।" } });
+                                console.log("⚠️ No keyword match found. Silent.");
                             }
                         } else {
                             console.error(`❌ Missing Access Token for Page ${pageId}`);
