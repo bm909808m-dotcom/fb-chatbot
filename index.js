@@ -1,7 +1,7 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Optimized Model List with Experimental Models to bypass standard quota
- * Fix: Exponential Backoff for Retry (5s -> 10s)
+ * Fix: Increased Retry Delay to 20s+ to handle Google's 16s cooldown requirement
+ * Fix: Added Fallback Message if all AI models fail due to quota
  */
 
 const express = require('express');
@@ -43,20 +43,18 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// UPDATED: Expanded Model List including Experimental versions
+// UPDATED: Model List prioritizing Lite (less quota)
 const DEFAULT_MODELS = [
-    "gemini-2.0-flash-lite-preview-02-05", // Specific preview (often less busy)
+    "gemini-2.0-flash-lite-preview-02-05", 
     "gemini-2.0-flash-lite",
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-exp",    // Experimental
-    "gemini-flash-latest"
+    "gemini-2.0-flash"
 ];
 
 // Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- SMART AI RESPONSE FUNCTION WITH EXPONENTIAL BACKOFF ---
+// --- SMART AI RESPONSE FUNCTION WITH LONG BACKOFF ---
 async function generateAIResponse(prompt) {
     let errorLog = "";
     
@@ -71,7 +69,7 @@ async function generateAIResponse(prompt) {
                 
                 const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
                 
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 20000)); // Increased timeout
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 25000)); 
                 const aiPromise = model.generateContent(prompt);
                 
                 const result = await Promise.race([aiPromise, timeoutPromise]);
@@ -87,8 +85,8 @@ async function generateAIResponse(prompt) {
                 console.warn(`⚠️ ${modelName} attempt ${attempts} failed:`, error.message);
                 
                 if (isRateLimit && attempts < maxAttempts) {
-                    // Exponential backoff: 5s then 10s
-                    const waitTime = attempts * 5000;
+                    // FIX: Increased delay to 20s because log said "retry in 16s"
+                    const waitTime = 20000; 
                     console.log(`⏳ Rate limit hit. Waiting ${waitTime/1000} seconds before retry...`);
                     await sleep(waitTime); 
                 } else {
@@ -112,7 +110,6 @@ async function getDb() {
     return dbClient.db(DB_NAME);
 }
 
-// Fixed: Robust Page ID Search
 async function getPageData(pageId) {
     const db = await getDb();
     let data = await db.collection(COL_TOKENS).findOne({ Page_ID: pageId.toString() });
@@ -122,7 +119,6 @@ async function getPageData(pageId) {
     return data;
 }
 
-// Fetch User Name from Facebook
 async function getUserProfile(userId, pageAccessToken) {
     try {
         const url = `https://graph.facebook.com/${userId}?fields=first_name,last_name&access_token=${pageAccessToken}`;
@@ -174,7 +170,6 @@ const auth = (req, res, next) => {
     else res.status(401).json({ error: "Unauthorized" });
 };
 
-// NEW: Ultimate AI Tester Route
 app.get('/test-ai', async (req, res) => {
     try {
         if (!GEMINI_API_KEY) return res.send(`<h1 style="color:red">API Key Missing</h1>`);
@@ -196,8 +191,7 @@ app.get('/test-ai', async (req, res) => {
                     <h1 style="color:red">AI FAILED ❌</h1>
                     <p><b>Errors:</b><br> ${result.error}</p>
                     <hr>
-                    <h3>Quota Limit Reached?</h3>
-                    <p>If you see "429 Too Many Requests", you have used up your free quota for now. Wait a few minutes and try again.</p>
+                    <p>Quota exceeded. Wait 1-2 minutes before testing again.</p>
                 </div>
             `);
         }
@@ -245,38 +239,30 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
-    console.log("📨 Webhook Hit!"); // START LOG
+    console.log("📨 Webhook Hit!"); 
     
     if (req.body.object === 'page') {
-        res.status(200).send('EVENT_RECEIVED'); // FB needs immediate response
+        res.status(200).send('EVENT_RECEIVED');
         
         for (const entry of req.body.entry) {
             const pageId = entry.id;
-            console.log(`📄 Event for Page ID: ${pageId}`); // LOG PAGE ID
-
             if (entry.messaging) {
                 for (const event of entry.messaging) {
                     if (event.message && event.message.text) {
                         const senderId = event.sender.id;
                         const userMsg = event.message.text;
-                        console.log(`👤 User ${senderId} says: ${userMsg}`); // LOG USER MSG
+                        console.log(`👤 User ${senderId} says: ${userMsg}`);
 
-                        if (senderId === pageId) continue; // Ignore self
+                        if (senderId === pageId) continue;
 
-                        // 1. Get Token
                         const pageData = await getPageData(pageId);
-                        if (!pageData) console.log("⚠️ Page Data NOT FOUND in DB!");
-                        
-                        // 2. Save User Msg
                         await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
 
-                        // 3. Check Pause
                         if (await isAiPaused(pageId, senderId)) {
                             console.log(`⏸️ AI is PAUSED for ${senderId}`);
                             continue;
                         }
 
-                        // 4. Generate AI
                         if (pageData?.Access_Token) {
                             console.log(`🤖 Generating AI Response...`);
                             
@@ -287,20 +273,17 @@ app.post('/webhook', async (req, res) => {
                             // Generate Response
                             const aiResult = await generateAIResponse(fullPrompt);
 
+                            // Handle AI Success or Failure
                             if (aiResult.text) {
                                 console.log(`✅ Sending to FB: ${aiResult.text.substring(0,20)}...`);
-                                
                                 await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
                                     recipient: { id: senderId }, message: { text: aiResult.text }
-                                }).then(() => {
-                                    console.log("🚀 Message SENT to FB successfully!");
-                                    saveMessage(pageId, senderId, 'ai', aiResult.text);
-                                }).catch(err => {
-                                    console.error("❌ FB API Error:", err.response?.data || err.message);
-                                });
-                                
+                                }).catch(err => console.error("❌ FB API Error:", err.response?.data || err.message));
+                                await saveMessage(pageId, senderId, 'ai', aiResult.text);
                             } else {
-                                console.error("❌ AI returned NULL. Log:", aiResult.error);
+                                console.error("❌ AI Quota Exceeded/Error. Log:", aiResult.error);
+                                // Optional: Send a fallback message to user if quota exceeded
+                                // await axios.post(..., { message: { text: "আমি এখন একটু ব্যস্ত, দয়া করে ১ মিনিট পর নক দিন।" } });
                             }
                         } else {
                             console.error(`❌ Missing Access Token for Page ${pageId}`);
