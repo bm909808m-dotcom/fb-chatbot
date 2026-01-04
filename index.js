@@ -1,8 +1,8 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Explicitly using 'gemini-2.5-flash' based on user's available models
- * Fix: Added detailed tracing logs for webhook debugging
- * Fix: Added Retry Logic for 429 (Quota Exceeded) Errors & Updated Model Names
+ * Fix: Optimized Model List (Prioritizing 'Lite' models to avoid 429 Errors)
+ * Fix: Increased Retry Delay to 10s for Rate Limits
+ * Fix: Removed unavailable 1.5/1.0 models to prevent 404s
  */
 
 const express = require('express');
@@ -44,26 +44,25 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// UPDATED: Prioritizing models & fixing 404 errors
+// UPDATED: Optimized Model List based on your available models
+// Using 'Lite' first as it consumes less quota
 const DEFAULT_MODELS = [
-    "gemini-2.5-flash",        // Primary
-    "gemini-2.0-flash",        // Secondary
-    "gemini-1.5-flash",        // Stable Backup
-    "gemini-1.5-pro",          // High Intelligence Backup
-    "gemini-1.0-pro"           // Legacy Backup
+    "gemini-2.0-flash-lite",   // Lite version (Often has better availability)
+    "gemini-2.5-flash",        // Newest Flash
+    "gemini-2.0-flash",        // Standard Flash
+    "gemini-flash-latest"      // Generic Fallback
 ];
 
-// Helper to pause execution (for retries)
+// Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // --- SMART AI RESPONSE FUNCTION WITH RETRY ---
 async function generateAIResponse(prompt) {
     let errorLog = "";
     
-    // Loop through defined reliable models
     for (const modelName of DEFAULT_MODELS) {
         let attempts = 0;
-        const maxAttempts = 2; // Try each model up to 2 times (Original + 1 Retry)
+        const maxAttempts = 2; 
 
         while (attempts < maxAttempts) {
             try {
@@ -72,7 +71,6 @@ async function generateAIResponse(prompt) {
                 
                 const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
                 
-                // Set a timeout for AI generation (15 seconds max)
                 const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
                 const aiPromise = model.generateContent(prompt);
                 
@@ -89,11 +87,11 @@ async function generateAIResponse(prompt) {
                 console.warn(`⚠️ ${modelName} attempt ${attempts} failed:`, error.message);
                 
                 if (isRateLimit && attempts < maxAttempts) {
-                    console.log("⏳ Rate limit hit. Waiting 5 seconds before retry...");
-                    await sleep(5000); // Wait 5s before retrying same model
+                    console.log("⏳ Rate limit hit. Waiting 10 seconds before retry...");
+                    await sleep(10000); // Increased wait time to 10s
                 } else {
                     errorLog += `[${modelName}]: ${error.message} | `;
-                    break; // Move to next model if not rate limit or retries exhausted
+                    break; 
                 }
             }
         }
@@ -187,7 +185,7 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid green; border-radius:10px;">
                     <h1 style="color:green">SUCCESS! 🎉</h1>
                     <p><b>AI Response:</b> ${result.text}</p>
-                    <p>AI connection verified.</p>
+                    <p>Gemini is working correctly.</p>
                 </div>
             `);
         } else {
@@ -195,7 +193,9 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid red; border-radius:10px;">
                     <h1 style="color:red">AI FAILED ❌</h1>
                     <p><b>Errors:</b><br> ${result.error}</p>
-                    <p>If you see "429 Too Many Requests", you have hit Google's free limit. Try waiting a minute.</p>
+                    <hr>
+                    <h3>Quota Limit Reached?</h3>
+                    <p>If you see "429 Too Many Requests", you have used up your free quota for now. Wait a few minutes and try again.</p>
                 </div>
             `);
         }
