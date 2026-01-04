@@ -1,7 +1,7 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Reverted to standard model aliases (gemini-1.5-flash, gemini-pro) to fix 404 errors
- * SDK Version: 0.21.0+
+ * Fix: Auto-detects available Gemini Models to fix 404 Errors
+ * Features: Live Chat, Human Takeover, AI Pause, User Names
  */
 
 const express = require('express');
@@ -31,9 +31,8 @@ const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || "my_secure_token_2026";
 const ADMIN_PASSWORD = process.env.ADMIN_PASS || "admin123"; 
 
-// Check Key immediately
 if (!GEMINI_API_KEY) {
-    console.error("❌ CRITICAL ERROR: GEMINI_API_KEY is missing in Environment Variables!");
+    console.error("❌ CRITICAL ERROR: GEMINI_API_KEY is missing!");
 }
 
 // Gemini Setup
@@ -45,33 +44,50 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// Robust AI Response Function with Error Throwing
+// fallback list if auto-detection fails
+const DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
+
+// --- SMART AI RESPONSE FUNCTION ---
 async function generateAIResponse(prompt) {
     let errorLog = "";
+    
+    // 1. Try to fetch available models dynamically first
+    let availableModels = [];
     try {
-        console.log("🤖 Attempting Gemini 1.5 Flash...");
-        // FIX: Using standard alias 'gemini-1.5-flash' which works best with SDK 0.21.0
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
-        const result = await model.generateContent(prompt);
-        const response = await result.response;
-        return { text: response.text(), error: null };
-    } catch (error) {
-        console.error("⚠️ Flash failed:", error.message);
-        errorLog += `Flash Error: ${error.message}. `;
-        
+        const listRes = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`);
+        if(listRes.data && listRes.data.models) {
+            // Filter models that support 'generateContent'
+            availableModels = listRes.data.models
+                .filter(m => m.supportedGenerationMethods.includes("generateContent"))
+                .map(m => m.name.replace('models/', '')); // remove 'models/' prefix
+        }
+    } catch (e) {
+        console.warn("⚠️ Could not list models dynamically, using defaults.");
+    }
+
+    // Combine detected models with defaults (detected first)
+    const modelsToTry = [...new Set([...availableModels, ...DEFAULT_MODELS])];
+
+    // 2. Loop through models until one works
+    for (const modelName of modelsToTry) {
         try {
-            console.log("🔄 Falling back to Gemini Pro...");
-            // FIX: Using standard 'gemini-pro' as reliable fallback
-            const modelPro = genAI.getGenerativeModel({ model: "gemini-pro", safetySettings });
-            const result = await modelPro.generateContent(prompt);
+            // console.log(`🤖 Trying Model: ${modelName}...`);
+            const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
+            const result = await model.generateContent(prompt);
             const response = await result.response;
-            return { text: response.text(), error: null };
-        } catch (finalError) {
-            console.error("❌ All AI models failed:", finalError.message);
-            errorLog += `Pro Error: ${finalError.message}`;
-            return { text: null, error: errorLog };
+            const text = response.text();
+            
+            if (text) {
+                console.log(`✅ Success with model: ${modelName}`);
+                return { text: text, error: null };
+            }
+        } catch (error) {
+            // console.warn(`⚠️ ${modelName} failed: ${error.message}`);
+            errorLog += `[${modelName}]: ${error.message} <br>`;
         }
     }
+    
+    return { text: null, error: errorLog };
 }
 
 // --- DATABASE HELPER ---
@@ -84,6 +100,7 @@ async function getDb() {
     return dbClient.db(DB_NAME);
 }
 
+// Fixed: Robust Page ID Search
 async function getPageData(pageId) {
     const db = await getDb();
     let data = await db.collection(COL_TOKENS).findOne({ Page_ID: pageId.toString() });
@@ -93,6 +110,7 @@ async function getPageData(pageId) {
     return data;
 }
 
+// Fetch User Name from Facebook
 async function getUserProfile(userId, pageAccessToken) {
     try {
         const url = `https://graph.facebook.com/${userId}?fields=first_name,last_name&access_token=${pageAccessToken}`;
@@ -144,11 +162,20 @@ const auth = (req, res, next) => {
     else res.status(401).json({ error: "Unauthorized" });
 };
 
-// NEW: Enhanced AI Testing Route
+// NEW: Ultimate AI Tester Route
 app.get('/test-ai', async (req, res) => {
     try {
-        if (!GEMINI_API_KEY) {
-            return res.send(`<h1 style="color:red">ERROR: API Key Missing</h1><p>Please set GEMINI_API_KEY in Render Environment Variables.</p>`);
+        if (!GEMINI_API_KEY) return res.send(`<h1 style="color:red">API Key Missing</h1>`);
+
+        // Check available models first to show user
+        let modelStatus = "";
+        try {
+            const listRes = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`);
+            const models = listRes.data.models || [];
+            const chatModels = models.filter(m => m.supportedGenerationMethods.includes("generateContent"));
+            modelStatus = `<b>Available Models for your Key:</b><br>` + chatModels.map(m => `<span style="color:blue">${m.name}</span>`).join(", ");
+        } catch (e) {
+            modelStatus = `<b style="color:red">Could not list models. Check if 'Generative Language API' is enabled in Google Cloud Console.</b> Error: ${e.message}`;
         }
 
         const prompt = "Hello Gemini, just say 'Active'";
@@ -159,21 +186,17 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid green; border-radius:10px;">
                     <h1 style="color:green">SUCCESS! 🎉</h1>
                     <p><b>AI Response:</b> ${result.text}</p>
-                    <p>Gemini is working correctly.</p>
+                    <hr>
+                    <p>${modelStatus}</p>
                 </div>
             `);
         } else {
             res.send(`
                 <div style="font-family:sans-serif; padding:20px; border:2px solid red; border-radius:10px;">
                     <h1 style="color:red">AI FAILED ❌</h1>
-                    <p><b>Reason:</b> ${result.error}</p>
+                    <p><b>Errors:</b><br> ${result.error}</p>
                     <hr>
-                    <h3>Common Fixes:</h3>
-                    <ul>
-                        <li>Check if GEMINI_API_KEY is correct in Render.</li>
-                        <li>Check if you have enabled billing (if using paid plan) or have free quota left.</li>
-                        <li>Ensure 'Google AI Studio' API key is used, not Vertex AI.</li>
-                    </ul>
+                    <p>${modelStatus}</p>
                 </div>
             `);
         }
@@ -182,8 +205,7 @@ app.get('/test-ai', async (req, res) => {
     }
 });
 
-// ... Existing API Endpoints (Conversations, Messages, AI Status, Toggle AI, Reply, Stats, Pages) ...
-// (Keeping these same as before to save space, but ensure they are in your file)
+// ... Standard API Routes ...
 app.get('/api/inbox/conversations', auth, async (req, res) => {
     try { const db = await getDb(); res.json(await db.collection(COL_CONV_STATE).find({}).sort({ lastInteraction: -1 }).limit(20).toArray()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -197,7 +219,7 @@ app.post('/api/inbox/toggle-ai', auth, async (req, res) => {
     try { const db = await getDb(); await db.collection(COL_CONV_STATE).updateOne({ pageId: req.body.pageId.toString(), userId: req.body.userId.toString() }, { $set: { aiPaused: req.body.paused } }, { upsert: true }); res.json({ success: true }); } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.post('/api/inbox/reply', auth, async (req, res) => {
-    try { const pageData = await getPageData(req.body.pageId); if (!pageData?.Access_Token) return res.status(400).json({ error: "Token not found" }); await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, { recipient: { id: req.body.userId }, message: { text: req.body.text } }); await saveMessage(req.body.pageId, req.body.userId, 'admin', req.body.text); res.json({ success: true }); } catch (e) { res.status(500).json({ error: e.message }); }
+    try { const pageData = await getPageData(req.body.pageId); if (!pageData?.Access_Token) return res.status(400).json({ error: "Page token not found in DB" }); await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, { recipient: { id: req.body.userId }, message: { text: req.body.text } }); await saveMessage(req.body.pageId, req.body.userId, 'admin', req.body.text); res.json({ success: true }); } catch (e) { res.status(500).json({ error: e.response?.data?.error?.message || e.message }); }
 });
 app.get('/api/stats', auth, async (req, res) => {
     const db = await getDb(); res.json({ totalLogs: await db.collection(COL_MESSAGES).countDocuments(), totalPages: await db.collection(COL_TOKENS).countDocuments() });
@@ -234,6 +256,7 @@ app.post('/webhook', async (req, res) => {
                         if (senderId === pageId) continue;
 
                         const pageData = await getPageData(pageId);
+                        // Save Msg & Fetch Name if possible
                         await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
 
                         if (await isAiPaused(pageId, senderId)) {
