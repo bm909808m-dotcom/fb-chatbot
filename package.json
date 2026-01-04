@@ -1,6 +1,6 @@
 {
   "name": "fb-gemini-automation",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Facebook 45 Pages Automation with Gemini AI & MongoDB",
   "main": "index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "express": "^4.19.2",
     "axios": "^1.6.8",
     "mongodb": "^6.5.0",
-    "@google/generative-ai": "^0.12.0",
+    "@google/generative-ai": "^0.21.0",
     "dotenv": "^16.4.5"
   },
   "engines": {
