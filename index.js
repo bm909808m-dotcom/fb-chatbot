@@ -2,6 +2,7 @@
  * Facebook Unified Inbox + Admin Dashboard
  * Feature: Keyword Based Auto-Reply (Manual Logic)
  * Removed: Google Gemini AI dependencies completely
+ * Updated: Single Page Fetch API for Editing Rules
  */
 
 const express = require('express');
@@ -174,6 +175,28 @@ app.get('/api/stats', auth, async (req, res) => {
 app.get('/api/pages', auth, async (req, res) => {
     const db = await getDb(); res.json(await db.collection(COL_TOKENS).find({}, { projection: { Access_Token: 0 } }).toArray());
 });
+
+// NEW: Get Single Page Details (For Edit)
+app.get('/api/page/:id', auth, async (req, res) => {
+    try {
+        const db = await getDb();
+        const pageId = req.params.id;
+        
+        let data = await db.collection(COL_TOKENS).findOne({ Page_ID: pageId.toString() });
+        if (!data && /^\d+$/.test(pageId)) {
+            data = await db.collection(COL_TOKENS).findOne({ Page_ID: parseInt(pageId) });
+        }
+
+        if (data) {
+            res.json(data);
+        } else {
+            res.status(404).json({ error: "Page not found" });
+        }
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.post('/api/pages', auth, async (req, res) => {
     try { const db = await getDb(); let update = { Page_Name: req.body.name }; if (req.body.token) update.Access_Token = req.body.token; if (req.body.persona !== undefined) update.System_Prompt = req.body.persona; await db.collection(COL_TOKENS).updateOne({ Page_ID: req.body.id.toString() }, { $set: update }, { upsert: true }); res.json({ success: true }); } catch (e) { res.status(500).json({ error: e.message }); }
 });
