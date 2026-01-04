@@ -1,6 +1,7 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
  * Fix: Updated SDK to 0.21.0 & Added Detailed Error Reporting in /test-ai
+ * Update: Using specific model versions (001) to fix 404 errors
  */
 
 const express = require('express');
@@ -48,8 +49,9 @@ const safetySettings = [
 async function generateAIResponse(prompt) {
     let errorLog = "";
     try {
-        console.log("🤖 Attempting Gemini 1.5 Flash...");
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
+        console.log("🤖 Attempting Gemini 1.5 Flash (001)...");
+        // FIX: Using specific model version to avoid 404 on aliases
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-001", safetySettings });
         const result = await model.generateContent(prompt);
         const response = await result.response;
         return { text: response.text(), error: null };
@@ -58,8 +60,9 @@ async function generateAIResponse(prompt) {
         errorLog += `Flash Error: ${error.message}. `;
         
         try {
-            console.log("🔄 Falling back to Gemini Pro...");
-            const modelPro = genAI.getGenerativeModel({ model: "gemini-pro", safetySettings });
+            console.log("🔄 Falling back to Gemini 1.0 Pro...");
+            // FIX: Using specific model version for fallback
+            const modelPro = genAI.getGenerativeModel({ model: "gemini-1.0-pro", safetySettings });
             const result = await modelPro.generateContent(prompt);
             const response = await result.response;
             return { text: response.text(), error: null };
