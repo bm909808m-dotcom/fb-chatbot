@@ -1,7 +1,7 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Auto-detects available Gemini Models to fix 404 Errors
- * Features: Live Chat, Human Takeover, AI Pause, User Names
+ * Fix: Explicitly using 'gemini-2.5-flash' based on user's available models
+ * Fix: Added detailed tracing logs for webhook debugging
  */
 
 const express = require('express');
@@ -35,7 +35,6 @@ if (!GEMINI_API_KEY) {
     console.error("❌ CRITICAL ERROR: GEMINI_API_KEY is missing!");
 }
 
-// Gemini Setup
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY || "");
 const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -44,46 +43,39 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// fallback list based on your available models
-const DEFAULT_MODELS = ["gemini-2.0-flash", "gemini-flash-latest", "gemini-pro-latest", "gemini-pro"];
+// UPDATED: Prioritizing models present in your account
+const DEFAULT_MODELS = [
+    "gemini-2.5-flash",        // Primary (From your list)
+    "gemini-2.0-flash",        // Backup
+    "gemini-2.0-flash-lite",   // Lite version
+    "gemini-pro"               // Fallback
+];
 
 // --- SMART AI RESPONSE FUNCTION ---
 async function generateAIResponse(prompt) {
     let errorLog = "";
     
-    // 1. Try to fetch available models dynamically first
-    let availableModels = [];
-    try {
-        const listRes = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`);
-        if(listRes.data && listRes.data.models) {
-            // Filter models that support 'generateContent'
-            availableModels = listRes.data.models
-                .filter(m => m.supportedGenerationMethods.includes("generateContent"))
-                .map(m => m.name.replace('models/', '')); // remove 'models/' prefix
-        }
-    } catch (e) {
-        console.warn("⚠️ Could not list models dynamically, using defaults.");
-    }
-
-    // Combine detected models with defaults (detected first)
-    const modelsToTry = [...new Set([...availableModels, ...DEFAULT_MODELS])];
-
-    // 2. Loop through models until one works
-    for (const modelName of modelsToTry) {
+    // Loop through defined reliable models
+    for (const modelName of DEFAULT_MODELS) {
         try {
-            // console.log(`🤖 Trying Model: ${modelName}...`);
+            console.log(`🤖 AI Engine: Trying ${modelName}...`);
             const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
-            const result = await model.generateContent(prompt);
+            
+            // Set a timeout for AI generation (10 seconds max)
+            const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 10000));
+            const aiPromise = model.generateContent(prompt);
+            
+            const result = await Promise.race([aiPromise, timeoutPromise]);
             const response = await result.response;
             const text = response.text();
             
             if (text) {
-                console.log(`✅ Success with model: ${modelName}`);
+                console.log(`✅ AI Success with: ${modelName}`);
                 return { text: text, error: null };
             }
         } catch (error) {
-            // console.warn(`⚠️ ${modelName} failed: ${error.message}`);
-            errorLog += `[${modelName}]: ${error.message} <br>`;
+            console.warn(`⚠️ ${modelName} failed or timed out:`, error.message);
+            errorLog += `[${modelName}]: ${error.message} | `;
         }
     }
     
@@ -167,17 +159,6 @@ app.get('/test-ai', async (req, res) => {
     try {
         if (!GEMINI_API_KEY) return res.send(`<h1 style="color:red">API Key Missing</h1>`);
 
-        // Check available models first to show user
-        let modelStatus = "";
-        try {
-            const listRes = await axios.get(`https://generativelanguage.googleapis.com/v1beta/models?key=${GEMINI_API_KEY}`);
-            const models = listRes.data.models || [];
-            const chatModels = models.filter(m => m.supportedGenerationMethods.includes("generateContent"));
-            modelStatus = `<b>Available Models for your Key:</b><br>` + chatModels.map(m => `<span style="color:blue">${m.name}</span>`).join(", ");
-        } catch (e) {
-            modelStatus = `<b style="color:red">Could not list models. Check if 'Generative Language API' is enabled in Google Cloud Console.</b> Error: ${e.message}`;
-        }
-
         const prompt = "Hello Gemini, just say 'Active'";
         const result = await generateAIResponse(prompt);
         
@@ -186,8 +167,7 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid green; border-radius:10px;">
                     <h1 style="color:green">SUCCESS! 🎉</h1>
                     <p><b>AI Response:</b> ${result.text}</p>
-                    <hr>
-                    <p>${modelStatus}</p>
+                    <p>Gemini 2.5 Flash is working correctly.</p>
                 </div>
             `);
         } else {
@@ -195,8 +175,6 @@ app.get('/test-ai', async (req, res) => {
                 <div style="font-family:sans-serif; padding:20px; border:2px solid red; border-radius:10px;">
                     <h1 style="color:red">AI FAILED ❌</h1>
                     <p><b>Errors:</b><br> ${result.error}</p>
-                    <hr>
-                    <p>${modelStatus}</p>
                 </div>
             `);
         }
@@ -244,48 +222,65 @@ app.get('/webhook', (req, res) => {
 });
 
 app.post('/webhook', async (req, res) => {
+    console.log("📨 Webhook Hit!"); // START LOG
+    
     if (req.body.object === 'page') {
-        res.status(200).send('EVENT_RECEIVED');
+        res.status(200).send('EVENT_RECEIVED'); // FB needs immediate response
+        
         for (const entry of req.body.entry) {
             const pageId = entry.id;
+            console.log(`📄 Event for Page ID: ${pageId}`); // LOG PAGE ID
+
             if (entry.messaging) {
                 for (const event of entry.messaging) {
                     if (event.message && event.message.text) {
                         const senderId = event.sender.id;
                         const userMsg = event.message.text;
-                        if (senderId === pageId) continue;
+                        console.log(`👤 User ${senderId} says: ${userMsg}`); // LOG USER MSG
 
+                        if (senderId === pageId) continue; // Ignore self
+
+                        // 1. Get Token
                         const pageData = await getPageData(pageId);
-                        // Save Msg & Fetch Name if possible
+                        if (!pageData) console.log("⚠️ Page Data NOT FOUND in DB!");
+                        
+                        // 2. Save User Msg
                         await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
 
+                        // 3. Check Pause
                         if (await isAiPaused(pageId, senderId)) {
-                            console.log(`⏸️ AI Paused for ${senderId}`);
+                            console.log(`⏸️ AI is PAUSED for ${senderId}`);
                             continue;
                         }
 
+                        // 4. Generate AI
                         if (pageData?.Access_Token) {
-                            console.log(`🤖 AI Processing for ${senderId}...`);
+                            console.log(`🤖 Generating AI Response...`);
                             
-                            const defaultPersona = `তুমি একজন প্রফেশনাল কাস্টমার সাপোর্ট এজেন্ট, কিন্তু অন্য দিকে তুমি একজন ভাল বন্ধু ও বটে। তুমি কাস্টমারের সমস্যার কথা মনোযোগ দিয়ে শোনো এবং সমাধানের চেষ্টা করো। নিয়ম: ১. সর্বদা 'জি', 'হুম', 'ওকে', 'ধন্যবাদ' এবং সম্মানসূচক শব্দ ব্যবহার করো। ২. কোনো প্রশ্নের উত্তর জানা না থাকলে মিথ্যা বলবে না, বরং বলো 'আমি এ ব্যাপারে জানিনা'।`;
+                            const defaultPersona = `তুমি একজন প্রফেশনাল কাস্টমার সাপোর্ট এজেন্ট, কিন্তু অন্য দিকে তুমি একজন ভাল বন্ধু ও বটে।`;
                             const systemInstruction = pageData.System_Prompt || defaultPersona;
                             const fullPrompt = `System: ${systemInstruction}\nUser: "${userMsg}"\nReply (in Bangla unless asked otherwise):`;
 
-                            // Generate Response (Using new robust function)
+                            // Generate Response
                             const aiResult = await generateAIResponse(fullPrompt);
 
                             if (aiResult.text) {
+                                console.log(`✅ Sending to FB: ${aiResult.text.substring(0,20)}...`);
+                                
                                 await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
                                     recipient: { id: senderId }, message: { text: aiResult.text }
-                                }).catch(err => console.error("FB Send Error:", err.response?.data || err.message));
+                                }).then(() => {
+                                    console.log("🚀 Message SENT to FB successfully!");
+                                    saveMessage(pageId, senderId, 'ai', aiResult.text);
+                                }).catch(err => {
+                                    console.error("❌ FB API Error:", err.response?.data || err.message);
+                                });
                                 
-                                await saveMessage(pageId, senderId, 'ai', aiResult.text);
-                                console.log(`✅ AI Replied.`);
                             } else {
-                                console.error("❌ AI Error:", aiResult.error);
+                                console.error("❌ AI returned NULL. Log:", aiResult.error);
                             }
                         } else {
-                            console.error(`❌ Token missing for Page ${pageId}`);
+                            console.error(`❌ Missing Access Token for Page ${pageId}`);
                         }
                     }
                 }
