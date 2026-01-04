@@ -1,8 +1,7 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
  * Feature: Keyword Based Auto-Reply (Manual Logic)
- * Removed: Google Gemini AI dependencies completely
- * Updated: Single Page Fetch API for Editing Rules
+ * Updated: Enhanced Debugging logs to find why specific pages are failing
  */
 
 const express = require('express');
@@ -31,7 +30,6 @@ const FB_VERIFY_TOKEN = process.env.FB_VERIFY_TOKEN || "my_secure_token_2026";
 const ADMIN_PASSWORD = process.env.ADMIN_PASS || "admin123"; 
 
 // --- MANUAL KEYWORD LOGIC ---
-// এই ফাংশনটি আপনার দেওয়া রুলস চেক করে উত্তর তৈরি করবে
 function getKeywordReply(userMsg, rulesText) {
     if (!rulesText) return null;
 
@@ -41,23 +39,20 @@ function getKeywordReply(userMsg, rulesText) {
     let defaultResponse = null;
 
     for (const line of lines) {
-        // ফরম্যাট: keyword -> response
         const parts = line.split('->');
         if (parts.length < 2) continue;
 
         const keyword = parts[0].trim().toLowerCase();
-        const response = parts.slice(1).join('->').trim(); // বাকি অংশটুকু রেসপন্স
+        const response = parts.slice(1).join('->').trim();
 
-        // ডিফল্ট মেসেজ সেট করা (যদি কোনো কী-ওয়ার্ড না মিলে)
         if (keyword === 'default' || keyword === 'else') {
             defaultResponse = response;
             continue;
         }
 
-        // যদি মেসেজের মধ্যে কী-ওয়ার্ড পাওয়া যায়
         if (msg.includes(keyword)) {
             matchedResponse = response;
-            break; // প্রথম ম্যাচ পেলেই থামবে
+            break; 
         }
     }
 
@@ -74,9 +69,14 @@ async function getDb() {
     return dbClient.db(DB_NAME);
 }
 
+// পেজ খোঁজার লজিক (String এবং Number দুইভাবেই চেক করবে)
 async function getPageData(pageId) {
     const db = await getDb();
+    
+    // ১. স্ট্রিং হিসেবে খোঁজা
     let data = await db.collection(COL_TOKENS).findOne({ Page_ID: pageId.toString() });
+    
+    // ২. না পেলে নম্বর হিসেবে খোঁজা
     if (!data && /^\d+$/.test(pageId)) {
         data = await db.collection(COL_TOKENS).findOne({ Page_ID: parseInt(pageId) });
     }
@@ -134,23 +134,19 @@ const auth = (req, res, next) => {
     else res.status(401).json({ error: "Unauthorized" });
 };
 
-// Test Logic Route (No AI)
+// Test Logic Route
 app.get('/test-bot', async (req, res) => {
     const rules = "hello -> Hi there!\nprice -> The price is 500tk.\ndefault -> I don't understand.";
     const testMsg1 = "hello bot";
     const testMsg2 = "what is the price?";
-    const testMsg3 = "bla bla";
-
+    
     const reply1 = getKeywordReply(testMsg1, rules);
     const reply2 = getKeywordReply(testMsg2, rules);
-    const reply3 = getKeywordReply(testMsg3, rules);
 
     res.send(`
         <h1>Keyword Bot Test</h1>
-        <p><b>Rules:</b> <pre>${rules}</pre></p>
         <p>Input: "${testMsg1}" => Output: <b>${reply1}</b></p>
         <p>Input: "${testMsg2}" => Output: <b>${reply2}</b></p>
-        <p>Input: "${testMsg3}" => Output: <b>${reply3}</b></p>
     `);
 });
 
@@ -175,28 +171,15 @@ app.get('/api/stats', auth, async (req, res) => {
 app.get('/api/pages', auth, async (req, res) => {
     const db = await getDb(); res.json(await db.collection(COL_TOKENS).find({}, { projection: { Access_Token: 0 } }).toArray());
 });
-
-// NEW: Get Single Page Details (For Edit)
 app.get('/api/page/:id', auth, async (req, res) => {
     try {
         const db = await getDb();
         const pageId = req.params.id;
-        
         let data = await db.collection(COL_TOKENS).findOne({ Page_ID: pageId.toString() });
-        if (!data && /^\d+$/.test(pageId)) {
-            data = await db.collection(COL_TOKENS).findOne({ Page_ID: parseInt(pageId) });
-        }
-
-        if (data) {
-            res.json(data);
-        } else {
-            res.status(404).json({ error: "Page not found" });
-        }
-    } catch (e) {
-        res.status(500).json({ error: e.message });
-    }
+        if (!data && /^\d+$/.test(pageId)) data = await db.collection(COL_TOKENS).findOne({ Page_ID: parseInt(pageId) });
+        if (data) res.json(data); else res.status(404).json({ error: "Page not found" });
+    } catch (e) { res.status(500).json({ error: e.message }); }
 });
-
 app.post('/api/pages', auth, async (req, res) => {
     try { const db = await getDb(); let update = { Page_Name: req.body.name }; if (req.body.token) update.Access_Token = req.body.token; if (req.body.persona !== undefined) update.System_Prompt = req.body.persona; await db.collection(COL_TOKENS).updateOne({ Page_ID: req.body.id.toString() }, { $set: update }, { upsert: true }); res.json({ success: true }); } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -218,42 +201,67 @@ app.post('/webhook', async (req, res) => {
         res.status(200).send('EVENT_RECEIVED');
         for (const entry of req.body.entry) {
             const pageId = entry.id;
+            console.log(`\n📨 New Event from Page: ${pageId}`);
+
             if (entry.messaging) {
                 for (const event of entry.messaging) {
                     if (event.message && event.message.text) {
                         const senderId = event.sender.id;
                         const userMsg = event.message.text;
-                        if (senderId === pageId) continue;
+                        console.log(`👤 User ${senderId} says: "${userMsg}"`);
 
+                        if (senderId === pageId) {
+                            console.log("➡️ Ignoring bot's own message.");
+                            continue; 
+                        }
+
+                        // 1. Database Check
                         const pageData = await getPageData(pageId);
-                        await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
-
-                        // Pause Logic (এখনও কাজ করবে)
-                        if (await isAiPaused(pageId, senderId)) {
-                            console.log(`⏸️ Bot Paused for ${senderId}`);
+                        
+                        if (!pageData) {
+                            console.error(`❌ CRITICAL: Page ID ${pageId} NOT FOUND in MongoDB!`);
+                            console.error(`👉 Action: Go to Dashboard -> Pages -> Add Page with ID: ${pageId}`);
                             continue;
                         }
 
+                        await saveMessage(pageId, senderId, 'user', userMsg, pageData?.Access_Token);
+
+                        if (await isAiPaused(pageId, senderId)) {
+                            console.log(`⏸️ Bot is Manually PAUSED for ${senderId}`);
+                            continue;
+                        }
+
+                        // 2. Token Check
                         if (pageData?.Access_Token) {
-                            console.log(`🔎 Checking keywords for User: ${senderId}`);
-                            
-                            // MANUAL KEYWORD LOGIC
-                            // System_Prompt ফিল্ড থেকেই এখন রুলস নেবে
+                            // 3. Rules Check
                             const rulesText = pageData.System_Prompt || "";
+                            
+                            if (!rulesText) {
+                                console.warn(`⚠️ Rules (System_Prompt) are EMPTY for Page ${pageId}. No reply sent.`);
+                                continue;
+                            }
+
+                            console.log(`🔎 Checking keyword rules...`);
                             const replyText = getKeywordReply(userMsg, rulesText);
 
                             if (replyText) {
-                                console.log(`✅ Match Found! Sending: ${replyText}`);
+                                console.log(`✅ Match! Reply: "${replyText}"`);
                                 await axios.post(`https://graph.facebook.com/v19.0/me/messages?access_token=${pageData.Access_Token}`, {
                                     recipient: { id: senderId }, message: { text: replyText }
-                                }).catch(err => console.error("❌ FB API Error:", err.response?.data || err.message));
-                                
-                                await saveMessage(pageId, senderId, 'bot', replyText);
+                                }).then(() => {
+                                    console.log("🚀 Reply Sent Successfully!");
+                                    saveMessage(pageId, senderId, 'bot', replyText);
+                                }).catch(err => {
+                                    console.error("❌ Facebook API Error:", err.response?.data || err.message);
+                                    if (err.response?.data?.error?.code === 190) {
+                                        console.error("👉 Action: Token Expired! Please update token in Dashboard.");
+                                    }
+                                });
                             } else {
-                                console.log("⚠️ No keyword match found. Silent.");
+                                console.log("⚠️ No matching keyword found in rules. Bot stayed silent.");
                             }
                         } else {
-                            console.error(`❌ Missing Access Token for Page ${pageId}`);
+                            console.error(`❌ Missing Access Token for Page ${pageId} in DB!`);
                         }
                     }
                 }
