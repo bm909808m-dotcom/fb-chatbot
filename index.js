@@ -2,6 +2,8 @@
  * Facebook Unified Inbox + Admin Dashboard + Custom Persona + Auto Refresh
  * Fixed: Page Token Not Found Issue & AI Toggle Logic
  * Updated: Robust AI Error Handling & Safety Settings
+ * Fixed: Persona Saving Issue (ID Type Mismatch)
+ * Updated: Default Bangla Persona
  */
 
 const express = require('express');
@@ -247,6 +249,7 @@ app.get('/api/pages', auth, async (req, res) => {
     res.json(pages);
 });
 
+// FIX: Page Saving Logic (ID Type Mismatch Fix)
 app.post('/api/pages', auth, async (req, res) => {
     try {
         const { name, id, token, persona } = req.body;
@@ -256,11 +259,25 @@ app.post('/api/pages', auth, async (req, res) => {
         if (token) updateFields.Access_Token = token; 
         if (persona !== undefined) updateFields.System_Prompt = persona;
 
-        // Ensure ID is saved as String to match Webhook
-        const safeId = id.toString();
+        // ডিফল্ট হিসেবে স্ট্রিং আইডি ব্যবহার করব
+        const safeIdStr = id.toString();
+        let filterQuery = { Page_ID: safeIdStr };
+
+        // ১. প্রথমে চেক করি এই আইডি স্ট্রিং হিসেবে আছে কিনা
+        const existingDoc = await db.collection(COL_TOKENS).findOne({ Page_ID: safeIdStr });
+        
+        // ২. যদি স্ট্রিং হিসেবে না পাই, তবে নম্বর হিসেবে চেক করি (পুরাতন ডাটা বা CSV আপলোডের ক্ষেত্রে)
+        if (!existingDoc && /^\d+$/.test(safeIdStr)) {
+            const idNum = parseInt(safeIdStr);
+            const existingDocNum = await db.collection(COL_TOKENS).findOne({ Page_ID: idNum });
+            // যদি নম্বর হিসেবে পাই, তবে আপডেট করার সময় নম্বর দিয়েই ফিল্টার করব
+            if (existingDocNum) {
+                filterQuery = { Page_ID: idNum };
+            }
+        }
 
         await db.collection(COL_TOKENS).updateOne(
-            { Page_ID: safeId },
+            filterQuery,
             { $set: updateFields },
             { upsert: true }
         );
@@ -317,10 +334,15 @@ app.post('/webhook', async (req, res) => {
 
                             console.log(`🤖 Generating AI reply for User: ${senderId}`);
 
-                            const defaultPersona = "You are a helpful customer support assistant. Keep replies short and polite.";
+                            // UPDATE: Default Bangla Persona
+                            const defaultPersona = `তুমি একজন প্রফেশনাল কাস্টমার সাপোর্ট এজেন্ট, কিন্তু অন্য দিকে তুমি একজন ভাল বন্ধু ও বটে। তুমি কাস্টমারের সমস্যার কথা মনোযোগ দিয়ে শোনো এবং সমাধানের চেষ্টা করো।
+নিয়ম:
+১. সর্বদা 'জি', 'হুম', 'ওকে', 'ধন্যবাদ' এবং সম্মানসূচক শব্দ ব্যবহার করো।
+২. কোনো প্রশ্নের উত্তর জানা না থাকলে মিথ্যা বলবে না, বরং বলো 'আমি এ ব্যাপারে জানিনা'।`;
+                            
                             const systemInstruction = pageData.System_Prompt || defaultPersona;
 
-                            const chatPrompt = `System: ${systemInstruction}\nUser: "${userMsg}"\nReply (in Bangla/English as appropriate):`;
+                            const chatPrompt = `System: ${systemInstruction}\nUser: "${userMsg}"\nReply (in Bangla unless asked otherwise):`;
                             
                             const result = await model.generateContent(chatPrompt);
                             const response = await result.response;
