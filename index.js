@@ -1,8 +1,7 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Optimized Model List (Prioritizing 'Lite' models to avoid 429 Errors)
- * Fix: Increased Retry Delay to 10s for Rate Limits
- * Fix: Removed unavailable 1.5/1.0 models to prevent 404s
+ * Fix: Optimized Model List with Experimental Models to bypass standard quota
+ * Fix: Exponential Backoff for Retry (5s -> 10s)
  */
 
 const express = require('express');
@@ -44,19 +43,20 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// UPDATED: Optimized Model List based on your available models
-// Using 'Lite' first as it consumes less quota
+// UPDATED: Expanded Model List including Experimental versions
 const DEFAULT_MODELS = [
-    "gemini-2.0-flash-lite",   // Lite version (Often has better availability)
-    "gemini-2.5-flash",        // Newest Flash
-    "gemini-2.0-flash",        // Standard Flash
-    "gemini-flash-latest"      // Generic Fallback
+    "gemini-2.0-flash-lite-preview-02-05", // Specific preview (often less busy)
+    "gemini-2.0-flash-lite",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-exp",    // Experimental
+    "gemini-flash-latest"
 ];
 
 // Helper to pause execution
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
-// --- SMART AI RESPONSE FUNCTION WITH RETRY ---
+// --- SMART AI RESPONSE FUNCTION WITH EXPONENTIAL BACKOFF ---
 async function generateAIResponse(prompt) {
     let errorLog = "";
     
@@ -71,7 +71,7 @@ async function generateAIResponse(prompt) {
                 
                 const model = genAI.getGenerativeModel({ model: modelName, safetySettings });
                 
-                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 15000));
+                const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("Timeout")), 20000)); // Increased timeout
                 const aiPromise = model.generateContent(prompt);
                 
                 const result = await Promise.race([aiPromise, timeoutPromise]);
@@ -87,8 +87,10 @@ async function generateAIResponse(prompt) {
                 console.warn(`⚠️ ${modelName} attempt ${attempts} failed:`, error.message);
                 
                 if (isRateLimit && attempts < maxAttempts) {
-                    console.log("⏳ Rate limit hit. Waiting 10 seconds before retry...");
-                    await sleep(10000); // Increased wait time to 10s
+                    // Exponential backoff: 5s then 10s
+                    const waitTime = attempts * 5000;
+                    console.log(`⏳ Rate limit hit. Waiting ${waitTime/1000} seconds before retry...`);
+                    await sleep(waitTime); 
                 } else {
                     errorLog += `[${modelName}]: ${error.message} | `;
                     break; 
