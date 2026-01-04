@@ -44,8 +44,8 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// fallback list if auto-detection fails
-const DEFAULT_MODELS = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro", "gemini-pro"];
+// fallback list based on your available models
+const DEFAULT_MODELS = ["gemini-2.0-flash", "gemini-flash-latest", "gemini-pro-latest", "gemini-pro"];
 
 // --- SMART AI RESPONSE FUNCTION ---
 async function generateAIResponse(prompt) {
