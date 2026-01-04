@@ -1,6 +1,6 @@
 /**
  * Facebook Unified Inbox + Admin Dashboard
- * Fix: Updated for Gemini 1.5 Flash compatibility & Fallback logic
+ * Fix: Added /test-ai route, robust AI error handling, and updated SDK logic
  */
 
 const express = require('express');
@@ -34,7 +34,7 @@ if (!GEMINI_API_KEY) {
     console.error("❌ CRITICAL: GEMINI_API_KEY is missing! AI will not work.");
 }
 
-// Gemini Setup with Safety Settings
+// Gemini Setup
 const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
 const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_HARASSMENT, threshold: HarmBlockThreshold.BLOCK_NONE },
@@ -43,23 +43,25 @@ const safetySettings = [
     { category: HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT, threshold: HarmBlockThreshold.BLOCK_NONE },
 ];
 
-// AI Response Function (With Fallback)
+// Robust AI Response Function
 async function generateAIResponse(prompt) {
     try {
-        // Try fast model first
+        console.log("🤖 Attempting Gemini 1.5 Flash...");
         const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash", safetySettings });
         const result = await model.generateContent(prompt);
-        return result.response.text();
+        const response = await result.response;
+        return response.text();
     } catch (error) {
-        console.error("⚠️ Gemini 1.5 Flash failed, trying Gemini Pro...", error.message);
+        console.error("⚠️ Flash failed:", error.message);
         try {
-            // Fallback to stable model
+            console.log("🔄 Falling back to Gemini Pro...");
             const modelPro = genAI.getGenerativeModel({ model: "gemini-pro", safetySettings });
             const result = await modelPro.generateContent(prompt);
-            return result.response.text();
+            const response = await result.response;
+            return response.text();
         } catch (finalError) {
-            console.error("❌ All AI models failed:", finalError.message);
-            return null; // Return null to indicate failure
+            console.error("❌ AI FAILURE:", finalError.message);
+            return null;
         }
     }
 }
@@ -133,6 +135,21 @@ const auth = (req, res, next) => {
     if (req.headers['x-admin-pass'] === ADMIN_PASSWORD) next();
     else res.status(401).json({ error: "Unauthorized" });
 };
+
+// NEW: AI Testing Route
+app.get('/test-ai', async (req, res) => {
+    try {
+        const prompt = "Hello Gemini, are you working? Reply with 'Yes, I am active!'";
+        const reply = await generateAIResponse(prompt);
+        if (reply) {
+            res.send(`<h1 style="color:green">SUCCESS! 🎉</h1><p>AI Replied: <b>${reply}</b></p>`);
+        } else {
+            res.send(`<h1 style="color:red">FAILED ❌</h1><p>Check server logs for details.</p>`);
+        }
+    } catch (e) {
+        res.status(500).send(`Error: ${e.message}`);
+    }
+});
 
 app.get('/api/inbox/conversations', auth, async (req, res) => {
     try {
